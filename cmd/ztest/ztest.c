@@ -64,6 +64,11 @@
  * (7) Threads are created with a reduced stack size, for sanity checking.
  *     Therefore, it's important not to allocate huge buffers on the stack.
  *
+ * (8) By default we randomly choose to enable encryption on datasets.
+ *     We also randomly choose which encryption algorithm to use.
+ *     This is done for all datasets including temps and clones.
+ *     This can be disabled with -C.
+ *
  * When run with no arguments, ztest runs for about five minutes and
  * produces no output if successful.  To get a little bit of information,
  * specify -V.  To get more information, specify -VV, and so on.
@@ -104,10 +109,13 @@
 #include <sys/vdev_file.h>
 #include <sys/spa_impl.h>
 #include <sys/metaslab_impl.h>
+#include <sys/dsl_crypto.h>
 #include <sys/dsl_prop.h>
 #include <sys/dsl_dataset.h>
 #include <sys/dsl_scan.h>
+#include <sys/zcrypt.h>
 #include <sys/zio_checksum.h>
+#include <sys/zio_crypt.h>
 #include <sys/refcount.h>
 #include <stdio.h>
 #include <stdio_ext.h>
@@ -157,6 +165,7 @@ typedef struct ztest_shared_opts {
 	uint64_t zo_time;
 	uint64_t zo_maxloops;
 	uint64_t zo_metaslab_gang_bang;
+    int zo_crypto;
 } ztest_shared_opts_t;
 
 static const ztest_shared_opts_t ztest_opts_defaults = {
@@ -178,7 +187,8 @@ static const ztest_shared_opts_t ztest_opts_defaults = {
 	.zo_init = 1,
 	.zo_time = 300,			/* 5 minutes */
 	.zo_maxloops = 50,		/* max loops during spa_freeze() */
-	.zo_metaslab_gang_bang = 32 << 10
+	.zo_metaslab_gang_bang = 32 << 10,
+    .zo_crypto = 1
 };
 
 extern uint64_t metaslab_gang_bang;
@@ -277,6 +287,8 @@ typedef struct ztest_ds {
 	kmutex_t	zd_dirobj_lock;
 	rll_t		zd_object_lock[ZTEST_OBJECT_LOCKS];
 	rll_t		zd_range_lock[ZTEST_RANGE_LOCKS];
+    enum zio_crypt  zd_crypt;
+    char            zd_wrapkey[256]; /* AES 129/192/256 wrapping key */
 } ztest_ds_t;
 
 /*
@@ -329,6 +341,7 @@ ztest_func_t ztest_vdev_LUN_growth;
 ztest_func_t ztest_vdev_add_remove;
 ztest_func_t ztest_vdev_aux_add_remove;
 ztest_func_t ztest_split_pool;
+ztest_func_t ztest_dsl_crypto;
 ztest_func_t ztest_reguid;
 
 uint64_t zopt_always = 0ULL * NANOSEC;		/* all the time */
@@ -376,6 +389,7 @@ ztest_info_t ztest_info[] = {
 	    &ztest_opts.zo_vdevtime				},
 	{ ztest_vdev_aux_add_remove,		1,
 	    &ztest_opts.zo_vdevtime				},
+    { ztest_dsl_crypto,                     1,      &zopt_often     },
 };
 
 #define	ZTEST_FUNCS	(sizeof (ztest_info) / sizeof (ztest_info_t))
@@ -409,6 +423,7 @@ typedef struct ztest_shared {
 	uint64_t	zs_metaslab_sz;
 	uint64_t	zs_metaslab_df_alloc_threshold;
 	uint64_t	zs_guid;
+    ztest_ds_t      zs_zd[];
 } ztest_shared_t;
 
 #define	ID_PARALLEL	-1ULL
@@ -423,6 +438,7 @@ static ztest_ds_t *ztest_ds;
 static kmutex_t ztest_vdev_lock;
 static krwlock_t ztest_name_lock;
 
+static int ztest_random_fd;
 static boolean_t ztest_dump_core = B_TRUE;
 static boolean_t ztest_exiting;
 
@@ -589,6 +605,7 @@ usage(boolean_t requested)
 	    "\t[-T time (default: %llu sec)] total run time\n"
 	    "\t[-F freezeloops (default: %llu)] max loops in spa_freeze()\n"
 	    "\t[-P passtime (default: %llu sec)] time per pass\n"
+                   "\t[-C disable encryption tests (default is enabled)\n"
 	    "\t[-B alt_ztest (default: <none>)] alternate ztest path\n"
 	    "\t[-h] (print help)\n"
 	    "",
@@ -625,7 +642,7 @@ process_options(int argc, char **argv)
 	bcopy(&ztest_opts_defaults, zo, sizeof (*zo));
 
 	while ((opt = getopt(argc, argv,
-	    "v:s:a:m:r:R:d:t:g:i:k:p:f:VET:P:hF:B:")) != EOF) {
+	    "v:s:a:m:r:R:d:t:g:i:k:p:f:VET:P:hF:B:C")) != EOF) {
 		value = 0;
 		switch (opt) {
 		case 'v':
@@ -709,6 +726,11 @@ process_options(int argc, char **argv)
 		case 'F':
 			zo->zo_maxloops = MAX(1, value);
 			break;
+        case 'C':
+            zo->zo_crypto = 0;
+            (void) printf(
+                          "Creation of encrypted datasets disabled.\n");
+            break;
 		case 'B':
 			(void) strlcpy(altdir, optarg, sizeof (altdir));
 			break;
@@ -799,6 +821,34 @@ ztest_random(uint64_t range)
 
 	return (r % range);
 }
+
+static void
+ztest_gen_wkey(ztest_ds_t *zd)
+{
+    size_t klen = zio_crypt_table[zd->zd_crypt].ci_keylen;
+
+    if (read(ztest_random_fd, &zd->zd_wrapkey, klen) != klen)
+        fatal(1, "short read from /dev/urandom");
+}
+
+zcrypt_key_t *
+ztest_get_wkey(ztest_ds_t *zd)
+{
+    zcrypt_key_t *zk;
+    size_t klen = zio_crypt_table[zd->zd_crypt].ci_keylen;
+
+    ASSERT(zd->zd_crypt != 0);
+    /* Similar to zcrypt_key_from_ioc */
+    zk = zcrypt_key_allocate();
+    zk->zk_key.ck_format = CRYPTO_KEY_RAW;
+    zk->zk_key.ck_data = kmem_alloc(klen, KM_SLEEP);
+    bcopy(zd->zd_wrapkey, zk->zk_key.ck_data, klen);
+    zk->zk_key.ck_length = klen * 8;
+    zk->zk_crypt = zd->zd_crypt;
+
+    return (zk);
+}
+
 
 /* ARGSUSED */
 static void
@@ -2304,7 +2354,7 @@ ztest_spa_create_destroy(ztest_ds_t *zd, uint64_t id)
 	 */
 	nvroot = make_vdev_root("/dev/bogus", NULL, 0, 0, 0, 0, 0, 1);
 	VERIFY3U(ENOENT, ==,
-	    spa_create("ztest_bad_file", nvroot, NULL, NULL, NULL));
+             spa_create("ztest_bad_file", nvroot, NULL, NULL, NULL, NULL));
 	nvlist_free(nvroot);
 
 	/*
@@ -2312,7 +2362,7 @@ ztest_spa_create_destroy(ztest_ds_t *zd, uint64_t id)
 	 */
 	nvroot = make_vdev_root("/dev/bogus", NULL, 0, 0, 0, 0, 2, 1);
 	VERIFY3U(ENOENT, ==,
-	    spa_create("ztest_bad_mirror", nvroot, NULL, NULL, NULL));
+             spa_create("ztest_bad_mirror", nvroot, NULL, NULL, NULL, NULL));
 	nvlist_free(nvroot);
 
 	/*
@@ -2321,7 +2371,7 @@ ztest_spa_create_destroy(ztest_ds_t *zd, uint64_t id)
 	 */
 	(void) rw_enter(&ztest_name_lock, RW_READER);
 	nvroot = make_vdev_root("/dev/bogus", NULL, 0, 0, 0, 0, 0, 1);
-	VERIFY3U(EEXIST, ==, spa_create(zo->zo_pool, nvroot, NULL, NULL, NULL));
+	VERIFY3U(EEXIST, ==, spa_create(zo->zo_pool, nvroot, NULL, NULL, NULL, NULL));
 	nvlist_free(nvroot);
 	VERIFY3U(0, ==, spa_open(zo->zo_pool, &spa, FTAG));
 	VERIFY3U(EBUSY, ==, spa_destroy(zo->zo_pool));
@@ -3068,11 +3118,34 @@ ztest_objset_create_cb(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx)
 }
 
 static int
-ztest_dataset_create(char *dsname)
+ztest_dataset_create(char *dsname, dsl_crypto_ctx_t *dcc)
 {
 	uint64_t zilset = ztest_random(100);
 	int err = dmu_objset_create(dsname, DMU_OST_OTHER, 0,
-	    ztest_objset_create_cb, NULL);
+                                dcc, ztest_objset_create_cb, NULL);
+
+    if (err)
+        return (err);
+
+    if (ztest_opts.zo_crypto) {
+        ASSERT(dcc != NULL);
+        ASSERT(dcc->dcc_crypt != 0);
+        err = ztest_dsl_prop_set_uint64(dsname, ZFS_PROP_ENCRYPTION,
+                                        dcc->dcc_crypt, B_FALSE);
+        if (err != 0) {
+            fatal(0, "ztest_dsl_prop_set_uint64"
+                  "(ZFS_PROP_ENCRYPTION) = %d", dsname, err);
+        }
+        if (dcc->dcc_crypt != ZIO_CRYPT_OFF) {
+            err = ztest_dsl_prop_set_uint64(dsname,
+                                            ZFS_PROP_CHECKSUM,
+                                            ZIO_CHECKSUM_SHA256_MAC, B_FALSE);
+            if (err != 0) {
+                fatal(0, "ztest_dsl_prop_set_uint64"
+                                    "(ZFS_PROP_CHECKSUM) = %d", dsname, err);
+            }
+        }
+    }
 
 	if (err || zilset < 80)
 		return (err);
@@ -3157,6 +3230,7 @@ ztest_dmu_objset_create_destroy(ztest_ds_t *zd, uint64_t id)
 	char *name;
 	zilog_t *zilog;
 	int i;
+    dsl_crypto_ctx_t dcc = { 0 };
 
 	zdtmp = umem_alloc(sizeof (ztest_ds_t), UMEM_NOFAIL);
 	name = umem_alloc(MAXNAMELEN, UMEM_NOFAIL);
@@ -3192,10 +3266,24 @@ ztest_dmu_objset_create_destroy(ztest_ds_t *zd, uint64_t id)
 	 */
 	VERIFY3U(ENOENT, ==, dmu_objset_hold(name, FTAG, &os));
 
-	/*
-	 * Verify that we can create a new dataset.
-	 */
-	error = ztest_dataset_create(name);
+    /*
+     * Verify that we can create a new dataset.
+     *
+     * Randomly choose to enable encryption and when we do
+     * pick a random value for the encryption property (which
+     * could be off).  Doing it in two layers ensures that
+     * we get a better distribution of encryption=off vs "on"
+     * otherwise most of the datasets we create will be encrypted.
+     */
+    if (ztest_opts.zo_crypto && ztest_random(2) == 0) {
+        dcc.dcc_crypt =
+            (enum zio_crypt) ztest_random_dsl_prop(ZFS_PROP_ENCRYPTION);
+        dcc.dcc_wrap_key = zcrypt_key_gen(dcc.dcc_crypt);
+    } else if (ztest_opts.zo_crypto) {
+        dcc.dcc_crypt = ZIO_CRYPT_OFF;
+    }
+
+	error = ztest_dataset_create(name, &dcc);
 	if (error) {
 		if (error == ENOSPC) {
 			ztest_record_enospc(FTAG);
@@ -3229,7 +3317,7 @@ ztest_dmu_objset_create_destroy(ztest_ds_t *zd, uint64_t id)
 	 * Verify that we cannot create an existing dataset.
 	 */
 	VERIFY3U(EEXIST, ==,
-	    dmu_objset_create(name, DMU_OST_OTHER, 0, NULL, NULL));
+             dmu_objset_create(name, DMU_OST_OTHER, 0, NULL, NULL, NULL));
 
 	/*
 	 * Verify that we can hold an objset that is also owned.
@@ -3326,6 +3414,7 @@ ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
 {
 	objset_t *clone;
 	dsl_dataset_t *ds;
+    dsl_crypto_ctx_t dcc = { 0 };
 	char *snap1name;
 	char *clone1name;
 	char *snap2name;
@@ -3343,6 +3432,11 @@ ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
 	(void) rw_enter(&ztest_name_lock, RW_READER);
 
 	ztest_dsl_dataset_cleanup(osname, id);
+    if (ztest_opts.zo_crypto && zd->zd_crypt != ZIO_CRYPT_OFF) {
+        zcrypt_key_t *wrapkey = ztest_get_wkey(zd);
+        error = dsl_crypto_key_load(osname, wrapkey);
+        ASSERT(error == 0 || error == EEXIST);
+    }
 
 	(void) snprintf(snap1name, MAXNAMELEN, "%s@s1_%llu",
 	    osname, (u_longlong_t)id);
@@ -3368,8 +3462,11 @@ ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
 	error = dmu_objset_hold(snap1name, FTAG, &clone);
 	if (error)
 		fatal(0, "dmu_open_snapshot(%s) = %d", snap1name, error);
-
-	error = dmu_objset_clone(clone1name, dmu_objset_ds(clone), 0);
+    if (ztest_opts.zo_crypto && zd->zd_crypt != ZIO_CRYPT_OFF) {
+        dcc.dcc_crypt = zd->zd_crypt;
+        dcc.dcc_wrap_key = zcrypt_key_gen(zd->zd_crypt);
+    }
+	error = dmu_objset_clone(clone1name, dmu_objset_ds(clone), &dcc, 0);
 	dmu_objset_rele(clone, FTAG);
 	if (error) {
 		if (error == ENOSPC) {
@@ -3403,7 +3500,7 @@ ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
 	if (error)
 		fatal(0, "dmu_open_snapshot(%s) = %d", snap3name, error);
 
-	error = dmu_objset_clone(clone2name, dmu_objset_ds(clone), 0);
+	error = dmu_objset_clone(clone2name, dmu_objset_ds(clone), &dcc, 0);
 	dmu_objset_rele(clone, FTAG);
 	if (error) {
 		if (error == ENOSPC) {
@@ -3596,8 +3693,14 @@ ztest_dmu_read_write(ztest_ds_t *zd, uint64_t id)
 		return;
 	}
 
-	dmu_object_set_checksum(os, bigobj,
-	    (enum zio_checksum)ztest_random_dsl_prop(ZFS_PROP_CHECKSUM), tx);
+    if (os->os_crypt == ZIO_CRYPT_OFF) {
+        dmu_object_set_checksum(os, bigobj,
+                                (enum zio_checksum)ztest_random_dsl_prop(ZFS_PROP_CHECKSUM),
+                                tx);
+    } else {
+        dmu_object_set_checksum(os, bigobj,
+                                ZIO_CHECKSUM_SHA256_MAC, tx);
+    }
 
 	dmu_object_set_compress(os, bigobj,
 	    (enum zio_compress)ztest_random_dsl_prop(ZFS_PROP_COMPRESSION), tx);
@@ -4612,6 +4715,65 @@ ztest_spa_prop_get_set(ztest_ds_t *zd, uint64_t id)
 	(void) rw_exit(&ztest_name_lock);
 }
 
+
+/*ARGSUSED*/
+void
+ztest_dsl_crypto(ztest_ds_t *zd, uint64_t id)
+{
+    ztest_shared_t *zs = ztest_shared;
+    zfs_crypt_key_status_t keystatus;
+    zcrypt_key_t *wrapkey;
+    int error;
+    char *name;
+
+    if (!ztest_opts.zo_crypto || zd->zd_crypt == 0 || zd->zd_crypt == ZIO_CRYPT_OFF)
+        return;
+
+    (void) rw_enter(&ztest_name_lock,
+				    RW_WRITER);
+    //(void) rw_wrlock(&zs->zs_name_lock);
+    name = zd->zd_name;
+
+    (void) dsl_dataset_keystatus_byname(name, &keystatus);
+
+    if (ztest_opts.zo_verbose >= 6) {
+        const char *kstr;
+        VERIFY(zfs_prop_index_to_string(ZFS_PROP_KEYSTATUS,
+                                        keystatus, &kstr) == 0);
+        (void) printf("%s keystatus = %s\n", name, kstr);
+    }
+    ASSERT(keystatus != ZFS_CRYPT_KEY_NONE);
+
+
+    if (keystatus == ZFS_CRYPT_KEY_UNAVAILABLE) {
+        if (ztest_opts.zo_verbose >= 6) {
+            (void) printf("%s dsl_crypto_key_load\n", name);
+        }
+        wrapkey = ztest_get_wkey(zd);
+        error = dsl_crypto_key_load(name, wrapkey);
+    }
+
+    if (ztest_random(2) == 0) {
+        zcrypt_key_t *new_wrapkey;
+        char nwkey[256];
+        size_t nwkeylen;
+        if (ztest_opts.zo_verbose >= 6) {
+            (void) printf("%s dsl_crypto_key_change\n", name);
+        }
+        new_wrapkey = zcrypt_key_gen(zd->zd_crypt);
+        nwkeylen = new_wrapkey->zk_key.ck_length / 8;
+        bcopy(new_wrapkey->zk_key.ck_data, nwkey, nwkeylen);
+        error = dsl_crypto_key_change(name, new_wrapkey, NULL);
+        if (error == 0) {
+            bcopy(nwkey, zd->zd_wrapkey, nwkeylen);
+        }
+    }
+
+	(void) rw_exit(&ztest_name_lock);
+    //(void) rw_unlock(&zs->zs_name_lock);
+}
+
+
 /*
  * Test snapshot hold/release and deferred destroy.
  */
@@ -4621,6 +4783,7 @@ ztest_dmu_snapshot_hold(ztest_ds_t *zd, uint64_t id)
 	int error;
 	objset_t *os = zd->zd_os;
 	objset_t *origin;
+    dsl_crypto_ctx_t dcc = { 0 };
 	char snapname[100];
 	char fullname[100];
 	char clonename[100];
@@ -4661,7 +4824,13 @@ ztest_dmu_snapshot_hold(ztest_ds_t *zd, uint64_t id)
 	if (error)
 		fatal(0, "dmu_objset_hold(%s) = %d", fullname, error);
 
-	error = dmu_objset_clone(clonename, dmu_objset_ds(origin), 0);
+    if (ztest_opts.zo_crypto && zd->zd_crypt != ZIO_CRYPT_OFF) {
+        /* Use a newly generated random wrapping key for the clone */
+        dcc.dcc_crypt = zd->zd_crypt;
+        dcc.dcc_wrap_key = zcrypt_key_gen(zd->zd_crypt);
+    }
+
+	error = dmu_objset_clone(clonename, dmu_objset_ds(origin), &dcc, 0);
 	dmu_objset_rele(origin, FTAG);
 	if (error) {
 		if (error == ENOSPC) {
@@ -4931,6 +5100,9 @@ ztest_ddt_repair(ztest_ds_t *zd, uint64_t id)
 	int copies = 2 * ZIO_DEDUPDITTO_MIN;
 	int i;
 
+    if (zd->zd_crypt != ZIO_CRYPT_OFF)
+        return;
+
 	blocksize = ztest_random_blocksize();
 	blocksize = MIN(blocksize, 2048);	/* because we write so many */
 
@@ -5007,7 +5179,7 @@ ztest_ddt_repair(ztest_ds_t *zd, uint64_t id)
 	ztest_pattern_set(buf, psize, ~pattern);
 
 	(void) zio_wait(zio_rewrite(NULL, spa, 0, &blk,
-	    buf, psize, NULL, NULL, ZIO_PRIORITY_SYNC_WRITE,
+	    buf, psize, NULL, NULL, NULL, ZIO_PRIORITY_SYNC_WRITE,
 	    ZIO_FLAG_CANFAIL | ZIO_FLAG_INDUCE_DAMAGE, NULL));
 
 	zio_buf_free(buf, psize);
@@ -5300,7 +5472,9 @@ ztest_deadman_alarm(int sig)
 static void
 ztest_execute(int test, ztest_info_t *zi, uint64_t id)
 {
-	ztest_ds_t *zd = &ztest_ds[id % ztest_opts.zo_datasets];
+    ztest_shared_t *zs = ztest_shared;
+    ztest_ds_t *zd = &zs->zs_zd[id % ztest_opts.zo_datasets];
+	//ztest_ds_t *zd = &ztest_ds[id % ztest_opts.zo_datasets];
 	ztest_shared_callstate_t *zc = ZTEST_GET_SHARED_CALLSTATE(test);
 	hrtime_t functime = gethrtime();
 	int i;
@@ -5372,7 +5546,7 @@ ztest_dataset_name(char *dsname, char *pool, int d)
 }
 
 static void
-ztest_dataset_destroy(int d)
+ztest_dataset_destroy(ztest_shared_t *zs, int d)
 {
 	char name[MAXNAMELEN];
 	int t;
@@ -5393,6 +5567,9 @@ ztest_dataset_destroy(int d)
 
 	(void) dmu_objset_find(name, ztest_objset_destroy_cb, NULL,
 	    DS_FIND_SNAPSHOTS | DS_FIND_CHILDREN);
+
+    zs->zs_zd[d].zd_crypt = 0;
+    bzero(zs->zs_zd[d].zd_wrapkey, sizeof (zs->zs_zd[d].zd_wrapkey));
 }
 
 static void
@@ -5417,20 +5594,45 @@ ztest_dataset_dirobj_verify(ztest_ds_t *zd)
 }
 
 static int
-ztest_dataset_open(int d)
+ztest_dataset_open(ztest_shared_t *zs, int d)
 {
-	ztest_ds_t *zd = &ztest_ds[d];
+    ztest_ds_t *zd = &zs->zs_zd[d];
 	uint64_t committed_seq = ZTEST_GET_SHARED_DS(d)->zd_seq;
 	objset_t *os;
 	zilog_t *zilog;
 	char name[MAXNAMELEN];
 	int error;
+    dsl_crypto_ctx_t dcc = { 0 };
 
 	ztest_dataset_name(name, ztest_opts.zo_pool, d);
 
 	(void) rw_enter(&ztest_name_lock, RW_READER);
 
-	error = ztest_dataset_create(name);
+    /*
+     * We randomly choose to enable encryption on a given dataset,
+     * and when we do we pick a new random wrapping key and
+     * value for the encryption property.  We do this the first time
+     * we open a dataset and we stick with those values until it
+     * is destroyed.
+     */
+    if (ztest_opts.zo_crypto && zd->zd_crypt == 0) {
+        if (ztest_random(2) == 0) {
+            zd->zd_crypt = ZIO_CRYPT_OFF;
+        } else {
+            zd->zd_crypt = (enum zio_crypt)
+                ztest_random_dsl_prop(ZFS_PROP_ENCRYPTION);
+            if (zd->zd_crypt != ZIO_CRYPT_OFF)
+                ztest_gen_wkey(zd);
+        }
+        ASSERT(zd->zd_crypt != ZIO_CRYPT_INHERIT);
+    }
+    /* Setup the dataset crypto context for creation */
+    if (ztest_opts.zo_crypto) {
+        dcc.dcc_crypt = zd->zd_crypt;
+        dcc.dcc_wrap_key = ztest_get_wkey(zd);
+    }
+
+	error = ztest_dataset_create(name, &dcc);
 	if (error == ENOSPC) {
 		(void) rw_exit(&ztest_name_lock);
 		ztest_record_enospc(FTAG);
@@ -5442,6 +5644,26 @@ ztest_dataset_open(int d)
 	(void) rw_exit(&ztest_name_lock);
 
 	ztest_zd_init(zd, ZTEST_GET_SHARED_DS(d), os);
+
+    if (ztest_opts.zo_crypto && error == EEXIST) {
+        zfs_crypt_key_status_t keystatus;
+        VERIFY3U(dsl_dataset_keystatus_byname(name, &keystatus), ==, 0);
+        if (ztest_opts.zo_verbose >= 6) {
+            const char *kstr;
+            VERIFY(zfs_prop_index_to_string(ZFS_PROP_KEYSTATUS,
+                                            keystatus, &kstr) == 0);
+            (void) printf("%s keystatus = %s\n", name, kstr);
+        }
+        if (keystatus == ZFS_CRYPT_KEY_UNAVAILABLE) {
+            zcrypt_key_t *wrapkey;
+            if (ztest_opts.zo_verbose >= 3) {
+                (void) printf("%s dsl_crypto_key_load\n", name);
+            }
+            wrapkey = ztest_get_wkey(zd);
+            error = dsl_crypto_key_load(name, wrapkey);
+            ASSERT(error == 0 || error == EEXIST);
+        }
+    }
 
 	zilog = zd->zd_zilog;
 
@@ -5474,9 +5696,9 @@ ztest_dataset_open(int d)
 }
 
 static void
-ztest_dataset_close(int d)
+ztest_dataset_close(ztest_shared_t *zs, int d)
 {
-	ztest_ds_t *zd = &ztest_ds[d];
+    ztest_ds_t *zd = &zs->zs_zd[d];
 
 	zil_close(zd->zd_zilog);
 	dmu_objset_rele(zd->zd_os, zd);
@@ -5580,7 +5802,7 @@ ztest_run(ztest_shared_t *zs)
 	 */
 	if (zs->zs_enospc_count != 0) {
 		int d = ztest_random(ztest_opts.zo_datasets);
-		ztest_dataset_destroy(d);
+		ztest_dataset_destroy(zs, d);
 	}
 	zs->zs_enospc_count = 0;
 
@@ -5597,7 +5819,7 @@ ztest_run(ztest_shared_t *zs)
 		kthread_t *thread;
 
 		if (t < ztest_opts.zo_datasets &&
-		    ztest_dataset_open(t) != 0)
+		    ztest_dataset_open(zs, t) != 0)
 			return;
 
 		VERIFY3P(thread = zk_thread_create(NULL, 0,
@@ -5614,7 +5836,7 @@ ztest_run(ztest_shared_t *zs)
 	for (t = ztest_opts.zo_threads - 1; t >= 0; t--) {
 		thread_join(tid[t]);
 		if (t < ztest_opts.zo_datasets)
-			ztest_dataset_close(t);
+			ztest_dataset_close(zs, t);
 	}
 
 	txg_wait_synced(spa_get_dsl(spa), 0);
@@ -5672,9 +5894,9 @@ ztest_run(ztest_shared_t *zs)
 }
 
 static void
-ztest_freeze(void)
+ztest_freeze(ztest_shared_t *zs)
 {
-	ztest_ds_t *zd = &ztest_ds[0];
+    ztest_ds_t *zd = &zs->zs_zd[0];
 	spa_t *spa;
 	int numloops = 0;
 
@@ -5683,7 +5905,7 @@ ztest_freeze(void)
 
 	kernel_init(FREAD | FWRITE);
 	VERIFY3U(0, ==, spa_open(ztest_opts.zo_pool, &spa, FTAG));
-	VERIFY3U(0, ==, ztest_dataset_open(0));
+	VERIFY3U(0, ==, ztest_dataset_open(zs, 0));
 
 	/*
 	 * Force the first log block to be transactionally allocated.
@@ -5726,7 +5948,7 @@ ztest_freeze(void)
 	/*
 	 * Close our dataset and close the pool.
 	 */
-	ztest_dataset_close(0);
+	ztest_dataset_close(zs, 0);
 	spa_close(spa, FTAG);
 	kernel_fini();
 
@@ -5735,8 +5957,8 @@ ztest_freeze(void)
 	 */
 	kernel_init(FREAD | FWRITE);
 	VERIFY3U(0, ==, spa_open(ztest_opts.zo_pool, &spa, FTAG));
-	VERIFY3U(0, ==, ztest_dataset_open(0));
-	ztest_dataset_close(0);
+	VERIFY3U(0, ==, ztest_dataset_open(zs, 0));
+	ztest_dataset_close(zs, 0);
 	spa_close(spa, FTAG);
 	kernel_fini();
 }
@@ -5806,7 +6028,7 @@ ztest_init(ztest_shared_t *zs)
 	    0, ztest_opts.zo_raidz, zs->zs_mirrors, 1);
 	props = make_random_props();
 	VERIFY3U(0, ==, spa_create(ztest_opts.zo_pool, nvroot, props,
-	    NULL, NULL));
+                               NULL, NULL, NULL));
 	nvlist_free(nvroot);
 
 	VERIFY3U(0, ==, spa_open(ztest_opts.zo_pool, &spa, FTAG));
@@ -5818,7 +6040,7 @@ ztest_init(ztest_shared_t *zs)
 
 	ztest_run_zdb(ztest_opts.zo_pool);
 
-	ztest_freeze();
+	ztest_freeze(zs);
 
 	ztest_run_zdb(ztest_opts.zo_pool);
 

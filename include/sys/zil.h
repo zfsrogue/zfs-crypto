@@ -82,11 +82,27 @@ typedef struct zil_header {
  * number passed in the blk_cksum field of the blkptr_t
  */
 typedef struct zil_chain {
-	uint64_t zc_pad;
+    uint64_t zc_mac;
 	blkptr_t zc_next_blk;	/* next block in chain */
 	uint64_t zc_nused;	/* bytes in log block used */
 	zio_eck_t zc_eck;	/* block trailer */
 } zil_chain_t;
+
+#define ZC_GET_CRYPT_MAC(data, size, mac)                       \
+{                                                               \
+        zil_chain_t *zilc;                                      \
+        zilc = (zil_chain_t *)(data);                           \
+        mac[0] = BE_32(BF64_GET(zilc->zc_mac,  0, 32));         \
+        mac[1] = BE_32(BF64_GET(zilc->zc_mac, 32, 32));         \
+}
+
+#define ZC_SET_CRYPT_MAC(data, size, mac)                       \
+{                                                               \
+        zil_chain_t *zilc;                                      \
+        zilc = (zil_chain_t *)(data);                           \
+        BF64_SET(zilc->zc_mac,  0, 32, BE_32(mac[0]));          \
+        BF64_SET(zilc->zc_mac, 32, 32, BE_32(mac[1]));          \
+}
 
 #define	ZIL_MIN_BLKSZ	4096ULL
 #define	ZIL_MAX_BLKSZ	SPA_MAXBLOCKSIZE
@@ -471,12 +487,19 @@ extern void	zil_clean(zilog_t *zilog, uint64_t synced_txg);
 extern int	zil_suspend(zilog_t *zilog);
 extern void	zil_resume(zilog_t *zilog);
 
+extern void     zil_suspend_dmu_sync(zilog_t *zilog);
+extern void     zil_resume_dmu_sync(zilog_t *zilog);
+
 extern void	zil_add_block(zilog_t *zilog, const blkptr_t *bp);
 extern int	zil_bp_tree_add(zilog_t *zilog, const blkptr_t *bp);
 
 extern void	zil_set_sync(zilog_t *zilog, uint64_t syncval);
 
 extern void	zil_set_logbias(zilog_t *zilog, uint64_t slogval);
+
+extern int zil_set_crypto_data(char *src, size_t size,
+    void *dest, iovec_t **srciovp, iovec_t **dstiovp, size_t *cdlen,
+    boolean_t encrypting);
 
 extern int zil_replay_disable;
 

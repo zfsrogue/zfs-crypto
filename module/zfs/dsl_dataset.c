@@ -25,6 +25,7 @@
  */
 
 #include <sys/dmu_objset.h>
+#include <sys/dsl_crypto.h>
 #include <sys/dsl_dataset.h>
 #include <sys/dsl_dir.h>
 #include <sys/dsl_prop.h>
@@ -782,16 +783,19 @@ dsl_dataset_make_exclusive(dsl_dataset_t *ds, void *owner)
 
 uint64_t
 dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
-    uint64_t flags, dmu_tx_t *tx)
+    dsl_crypto_ctx_t *dcc, uint64_t flags, dmu_tx_t *tx)
 {
 	dsl_pool_t *dp = dd->dd_pool;
 	dmu_buf_t *dbuf;
 	dsl_dataset_phys_t *dsphys;
 	uint64_t dsobj;
 	objset_t *mos = dp->dp_meta_objset;
+    boolean_t keycreate = B_FALSE;
 
-	if (origin == NULL)
+	if (origin == NULL) {
 		origin = dp->dp_origin_snap;
+        keycreate = B_TRUE;
+    }
 
 	ASSERT(origin == NULL || origin->ds_dir->dd_pool == dp);
 	ASSERT(origin == NULL || origin->ds_phys->ds_num_children > 0);
@@ -817,6 +821,9 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 
 	if (origin == NULL) {
 		dsphys->ds_deadlist_obj = dsl_deadlist_alloc(mos, tx);
+        if (dcc)
+            VERIFY3U(0, ==, dsl_crypto_key_create(dd, dsphys,
+                                                  dsobj, dcc, tx));
 	} else {
 		dsl_dataset_t *ohds;
 
@@ -839,6 +846,13 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 		    origin->ds_dir->dd_phys->dd_head_dataset_obj, FTAG, &ohds));
 		dsphys->ds_deadlist_obj = dsl_deadlist_clone(&ohds->ds_deadlist,
 		    dsphys->ds_prev_snap_txg, dsphys->ds_prev_snap_obj, tx);
+        if (dcc && keycreate) {
+            VERIFY3U(0, ==, dsl_crypto_key_create(dd, dsphys,
+                                                  dsobj, dcc, tx));
+        } else if (dcc) {
+            VERIFY3U(0, ==, dsl_crypto_key_clone(dd, dsphys,
+                                                 dsobj, origin, dcc, tx));
+        }
 		dsl_dataset_rele(ohds, FTAG);
 
 		if (spa_version(dp->dp_spa) >= SPA_VERSION_NEXT_CLONES) {
@@ -879,7 +893,7 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 
 uint64_t
 dsl_dataset_create_sync(dsl_dir_t *pdd, const char *lastname,
-    dsl_dataset_t *origin, uint64_t flags, cred_t *cr, dmu_tx_t *tx)
+                        dsl_dataset_t *origin, struct dsl_crypto_ctx *dcc, uint64_t flags, cred_t *cr, dmu_tx_t *tx)
 {
 	dsl_pool_t *dp = pdd->dd_pool;
 	uint64_t dsobj, ddobj;
@@ -890,7 +904,7 @@ dsl_dataset_create_sync(dsl_dir_t *pdd, const char *lastname,
 	ddobj = dsl_dir_create_sync(dp, pdd, lastname, tx);
 	VERIFY(0 == dsl_dir_open_obj(dp, ddobj, lastname, FTAG, &dd));
 
-	dsobj = dsl_dataset_create_sync_dd(dd, origin, flags, tx);
+	dsobj = dsl_dataset_create_sync_dd(dd, origin, dcc, flags, tx);
 
 	dsl_deleg_set_create_perms(dd, tx, cr);
 
@@ -1087,6 +1101,9 @@ dsl_dataset_destroy(dsl_dataset_t *ds, void *tag, boolean_t defer)
 	if (err)
 		goto out_free;
 
+	if (dsl_dataset_keystatus(ds, B_FALSE) == ZFS_CRYPT_KEY_UNAVAILABLE)
+		os->os_destroy_nokey = B_TRUE;
+
 	/*
 	 * remove the objects in open context, so that we won't
 	 * have too much to do in syncing context.
@@ -1117,7 +1134,8 @@ dsl_dataset_destroy(dsl_dataset_t *ds, void *tag, boolean_t defer)
 	 * context, the user space accounting should be zero.
 	 */
 	if (ds->ds_phys->ds_bp.blk_fill == 0 &&
-	    dmu_objset_userused_enabled(os)) {
+	    dmu_objset_userused_enabled(os)  &&
+	    !ds->ds_objset->os_destroy_nokey) {
 		ASSERTV(uint64_t count);
 		ASSERT(zap_count(os, DMU_USERUSED_OBJECT, &count) != 0 ||
 		    count == 0);
@@ -1175,9 +1193,13 @@ dsl_dataset_destroy(dsl_dataset_t *ds, void *tag, boolean_t defer)
 		dsl_dataset_disown(dsda.rm_origin, tag);
 
 	/* if it is successful, dsl_dir_destroy_sync will close the dd */
-	if (err)
+	if (err) {
 		dsl_dir_close(dd, FTAG);
-
+	} else {
+		/* Remove the key from the keystore for encrypted datasets. */
+		err = zcrypt_keystore_remove(dsl_dataset_get_spa(ds),
+                                     ds->ds_object);
+	}
 out_free:
 	kmem_free(dummy_ds, sizeof (dsl_dataset_t));
 out:

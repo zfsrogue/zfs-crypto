@@ -36,10 +36,12 @@
  */
 
 #include <sys/dmu_traverse.h>
+#include <sys/dsl_crypto.h>
 #include <sys/dsl_dataset.h>
 #include <sys/dsl_prop.h>
 #include <sys/zap.h>
 #include <sys/zil_impl.h>
+#include <sys/zio_crypt.h>
 #include <sys/zio.h>
 #include <sys/zfs_rlock.h>
 #include <sys/zfs_znode.h>
@@ -1258,6 +1260,11 @@ __zvol_create_minor(const char *name)
 	error = dmu_objset_own(name, DMU_OST_ZVOL, B_TRUE, zvol_tag, &os);
 	if (error)
 		goto out_doi;
+
+    /* Make sure we have the key loaded if we need one. */
+    error = dsl_crypto_key_inherit(name);
+    if (error != 0 && error != EEXIST)
+		goto out_dmu_objset_disown;
 
 	error = dmu_object_info(os, ZVOL_OBJ, doi);
 	if (error)

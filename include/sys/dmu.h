@@ -56,6 +56,7 @@ struct zio;
 struct blkptr;
 struct zap_cursor;
 struct dsl_dataset;
+struct dsl_crypto_ctx;
 struct dsl_pool;
 struct dnode;
 struct drr_begin;
@@ -135,6 +136,7 @@ typedef enum dmu_object_type {
 	DMU_OT_DEADLIST_HDR,		/* UINT64 */
 	DMU_OT_DSL_CLONES,		/* ZAP */
 	DMU_OT_BPOBJ_SUBOBJ,		/* UINT64 */
+    DMU_OT_DSL_KEYCHAIN,            /* ZAP */
 	DMU_OT_NUMTYPES
 } dmu_object_type_t;
 
@@ -187,10 +189,14 @@ void dmu_objset_disown(objset_t *os, void *tag);
 int dmu_objset_open_ds(struct dsl_dataset *ds, objset_t **osp);
 
 int dmu_objset_evict_dbufs(objset_t *os);
+    // FIXME
+#if 0
 int dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
+                      struct dsl_crypto_ctx *crypto_ctx,
     void (*func)(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx), void *arg);
 int dmu_objset_clone(const char *name, struct dsl_dataset *clone_origin,
-    uint64_t flags);
+    struct dsl_crypto_ctx *crypto_ctx, uint64_t flags);
+#endif
 int dmu_objset_destroy(const char *name, boolean_t defer);
 int dmu_snapshots_destroy_nvl(struct nvlist *snaps, boolean_t defer, char *);
 int dmu_objset_snapshot(char *fsname, char *snapname, char *tag,
@@ -555,7 +561,8 @@ typedef struct dmu_object_info {
 	uint8_t doi_indirection;		/* 2 = dnode->indirect->data */
 	uint8_t doi_checksum;
 	uint8_t doi_compress;
-	uint8_t doi_pad[5];
+    uint8_t doi_crypt;
+	uint8_t doi_pad[4];
 	uint64_t doi_physical_blocks_512;	/* data + metadata, 512b blks */
 	uint64_t doi_max_offset;
 	uint64_t doi_fill_count;		/* number of non-empty blocks */
@@ -566,6 +573,7 @@ typedef void arc_byteswap_func_t(void *buf, size_t size);
 typedef struct dmu_object_type_info {
 	arc_byteswap_func_t	*ot_byteswap;
 	boolean_t		ot_metadata;
+    boolean_t       ot_encrypt;
 	char			*ot_name;
 } dmu_object_type_info_t;
 
@@ -730,7 +738,7 @@ typedef struct dmu_recv_cookie {
 } dmu_recv_cookie_t;
 
 int dmu_recv_begin(char *tofs, char *tosnap, char *topds, struct drr_begin *,
-    boolean_t force, objset_t *origin, dmu_recv_cookie_t *);
+                   boolean_t force, objset_t *origin, dmu_recv_cookie_t *, struct dsl_crypto_ctx *dcc);
 int dmu_recv_stream(dmu_recv_cookie_t *drc, struct vnode *vp, offset_t *voffp,
     int cleanup_fd, uint64_t *action_handlep);
 int dmu_recv_end(dmu_recv_cookie_t *drc);

@@ -68,6 +68,7 @@ zfs_prop_init(void)
 		{ "fletcher2",	ZIO_CHECKSUM_FLETCHER_2 },
 		{ "fletcher4",	ZIO_CHECKSUM_FLETCHER_4 },
 		{ "sha256",	ZIO_CHECKSUM_SHA256 },
+        { "sha256-mac", ZIO_CHECKSUM_SHA256_MAC },
 		{ NULL }
 	};
 
@@ -186,6 +187,28 @@ zfs_prop_init(void)
 		{ NULL }
 	};
 
+    static zprop_index_t crypt_table[] = {
+        { "on",                 ZIO_CRYPT_ON },
+        { "off",                ZIO_CRYPT_OFF },
+        { "aes-128-ccm",        ZIO_CRYPT_AES_128_CCM },
+        { "aes-192-ccm",        ZIO_CRYPT_AES_192_CCM },
+        { "aes-256-ccm",        ZIO_CRYPT_AES_256_CCM },
+        { "aes-128-gcm",        ZIO_CRYPT_AES_128_GCM },
+        { "aes-192-gcm",        ZIO_CRYPT_AES_192_GCM },
+        { "aes-256-gcm",        ZIO_CRYPT_AES_256_GCM },
+        { "aes-128-ctr",        ZIO_CRYPT_AES_128_CTR },
+        { NULL }
+    };
+
+    static zprop_index_t keystatus_table[] = {
+        { "none",               ZFS_CRYPT_KEY_NONE},
+        { "defined",            ZFS_CRYPT_KEY_DEFINED},
+        { "unavailable",        ZFS_CRYPT_KEY_UNAVAILABLE},
+        { "available",          ZFS_CRYPT_KEY_AVAILABLE},
+        { NULL }
+    };
+
+
 	static zprop_index_t xattr_table[] = {
 		{ "off",	ZFS_XATTR_OFF },
 		{ "on",		ZFS_XATTR_DIR },
@@ -275,6 +298,10 @@ zfs_prop_init(void)
 	zprop_register_index(ZFS_PROP_DEFER_DESTROY, "defer_destroy", 0,
 	    PROP_READONLY, ZFS_TYPE_SNAPSHOT, "yes | no", "DEFER_DESTROY",
 	    boolean_table);
+    zprop_register_index(ZFS_PROP_KEYSTATUS, "keystatus",
+                         ZFS_CRYPT_KEY_NONE, PROP_READONLY,
+                         ZFS_TYPE_DATASET, "undefined | unavailable | available",
+                         "KEYSTATUS", keystatus_table);
 
 	/* set once index properties */
 	zprop_register_index(ZFS_PROP_NORMALIZE, "normalization", 0,
@@ -285,6 +312,11 @@ zfs_prop_init(void)
 	    ZFS_CASE_SENSITIVE, PROP_ONETIME, ZFS_TYPE_FILESYSTEM |
 	    ZFS_TYPE_SNAPSHOT,
 	    "sensitive | insensitive | mixed", "CASE", case_table);
+    zprop_register_index(ZFS_PROP_ENCRYPTION, "encryption",
+                         ZIO_CRYPT_DEFAULT, PROP_ONETIME, ZFS_TYPE_DATASET,
+                         "on | off | aes-128-ccm | aes-192-ccm | aes-256-ccm | "
+                         "aes-128-gcm | aes-192-gcm | aes-256-gcm",
+                         "CRYPT", crypt_table);
 
 	/* set once index (boolean) properties */
 	zprop_register_index(ZFS_PROP_UTF8ONLY, "utf8only", 0, PROP_ONETIME,
@@ -310,6 +342,10 @@ zfs_prop_init(void)
 	zprop_register_string(ZFS_PROP_MLSLABEL, "mlslabel",
 	    ZFS_MLSLABEL_DEFAULT, PROP_INHERIT, ZFS_TYPE_DATASET,
 	    "<sensitivity label>", "MLSLABEL");
+    zprop_register_string(ZFS_PROP_KEYSOURCE, "keysource", "none",
+        PROP_INHERIT, ZFS_TYPE_DATASET,
+        "raw | hex | passphrase,"
+        "prompt | file://<path> | NO pkcs11: | NO https://<path>", "KEYSOURCE");
 
 	/* readonly number properties */
 	zprop_register_number(ZFS_PROP_USED, "used", 0, PROP_READONLY,
@@ -391,11 +427,19 @@ zfs_prop_init(void)
 	zprop_register_hidden(ZFS_PROP_PRIVATE, "priv_prop",
 	    PROP_TYPE_NUMBER, PROP_READONLY, ZFS_TYPE_FILESYSTEM,
 	    "PRIV_PROP");
+    zprop_register_hidden(ZFS_PROP_SALT, "salt", PROP_TYPE_NUMBER,
+
+        PROP_READONLY, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME, "SALT");
 
 	/* oddball properties */
 	zprop_register_impl(ZFS_PROP_CREATION, "creation", PROP_TYPE_NUMBER, 0,
 	    NULL, PROP_READONLY, ZFS_TYPE_DATASET,
 	    "<date>", "CREATION", B_FALSE, B_TRUE, NULL);
+
+    zprop_register_impl(ZFS_PROP_REKEYDATE, "rekeydate",
+                        PROP_TYPE_NUMBER, 0, NULL, PROP_READONLY,
+                        ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
+                        "<date>", "REKEYDATE", B_FALSE, B_TRUE, NULL);
 }
 
 boolean_t

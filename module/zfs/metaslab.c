@@ -1630,6 +1630,7 @@ metaslab_alloc(spa_t *spa, metaslab_class_t *mc, uint64_t psize, blkptr_t *bp,
 
 	ASSERT(ndvas > 0 && ndvas <= spa_max_replication(spa));
 	ASSERT(BP_GET_NDVAS(bp) == 0);
+    ASSERT(!BP_IS_ENCRYPTED(bp) || ndvas < spa_max_replication(spa));
 	ASSERT(hintbp == NULL || ndvas <= BP_GET_NDVAS(hintbp));
 
 	for (d = 0; d < ndvas; d++) {

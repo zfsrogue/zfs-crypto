@@ -32,10 +32,12 @@
 #include <sys/vdev_impl.h>
 #include <sys/zio_impl.h>
 #include <sys/zio_compress.h>
+#include <sys/zio_crypt.h>
 #include <sys/zio_checksum.h>
 #include <sys/dmu_objset.h>
 #include <sys/arc.h>
 #include <sys/ddt.h>
+#include <sys/zil.h>
 
 /*
  * ==========================================================================
@@ -324,7 +326,7 @@ zio_vdev_free(void *buf)
  */
 static void
 zio_push_transform(zio_t *zio, void *data, uint64_t size, uint64_t bufsize,
-	zio_transform_func_t *transform)
+        zio_transform_func_t *transform, void *arg)
 {
 	zio_transform_t *zt = kmem_alloc(sizeof (zio_transform_t), KM_PUSHPAGE);
 
@@ -332,6 +334,7 @@ zio_push_transform(zio_t *zio, void *data, uint64_t size, uint64_t bufsize,
 	zt->zt_orig_size = zio->io_size;
 	zt->zt_bufsize = bufsize;
 	zt->zt_transform = transform;
+    zt->zt_transform_arg = arg;
 
 	zt->zt_next = zio->io_transform_stack;
 	zio->io_transform_stack = zt;
@@ -348,7 +351,8 @@ zio_pop_transforms(zio_t *zio)
 	while ((zt = zio->io_transform_stack) != NULL) {
 		if (zt->zt_transform != NULL)
 			zt->zt_transform(zio,
-			    zt->zt_orig_data, zt->zt_orig_size);
+                             zt->zt_orig_data, zt->zt_orig_size,
+                             zt->zt_transform_arg);
 
 		if (zt->zt_bufsize != 0)
 			zio_buf_free(zio->io_data, zt->zt_bufsize);
@@ -367,7 +371,7 @@ zio_pop_transforms(zio_t *zio)
  * ==========================================================================
  */
 static void
-zio_subblock(zio_t *zio, void *data, uint64_t size)
+zio_subblock(zio_t *zio, void *data, uint64_t size, void *arg)
 {
 	ASSERT(zio->io_size > size);
 
@@ -376,13 +380,55 @@ zio_subblock(zio_t *zio, void *data, uint64_t size)
 }
 
 static void
-zio_decompress(zio_t *zio, void *data, uint64_t size)
+zio_decompress(zio_t *zio, void *data, uint64_t size, void *arg)
 {
 	if (zio->io_error == 0 &&
 	    zio_decompress_data(BP_GET_COMPRESS(zio->io_bp),
 	    zio->io_data, data, zio->io_size, size) != 0)
 		zio->io_error = EIO;
 }
+
+static void
+zio_decrypt(zio_t *zio, void *data, uint64_t size, void *arg)
+{
+    zcrypt_key_t *key = arg;
+    blkptr_t *bp = zio->io_bp;
+    int type = BP_GET_TYPE(bp);
+    uint32_t mac[3];        /* Max maclen is 96 bits */
+    uint32_t iv[3];         /* Max ivlen is 96 bits */
+
+    ASSERT3U(spa_version(zio->io_spa), >=, SPA_VERSION_CRYPTO);
+
+#if _KERNEL
+	printk("zio_decrypt enter: %d\n", zio->io_error);
+#endif
+
+    if (zio->io_error != 0) {
+        zcrypt_key_release(key, zio);
+        return;
+    }
+
+    /*
+     * Intent log only has a MAC since the IV is always calculated
+     * off the bookmark.
+     */
+    if (type == DMU_OT_INTENT_LOG) {
+        ZC_GET_CRYPT_MAC(zio->io_data, zio->io_size, mac);
+    } else {
+        ASSERT3U(BP_GET_CHECKSUM(bp), ==, ZIO_CHECKSUM_SHA256_MAC);
+        BP_GET_CRYPT_MAC(bp, mac);
+        BP_GET_CRYPT_IV(bp, iv);
+    }
+
+    zio->io_error = zio_decrypt_data(key, &zio->io_bookmark,
+                                     bp->blk_birth, type, zio->io_data, zio->io_size,
+                                     (char *)&mac, (char *)&iv, data, size);
+    zcrypt_key_release(key, zio);
+#if _KERNEL
+	printk("zio_decrypt exit\n");
+#endif
+}
+
 
 /*
  * ==========================================================================
@@ -704,6 +750,8 @@ zio_write(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp,
 	    zp->zp_checksum < ZIO_CHECKSUM_FUNCTIONS &&
 	    zp->zp_compress >= ZIO_COMPRESS_OFF &&
 	    zp->zp_compress < ZIO_COMPRESS_FUNCTIONS &&
+           zp->zp_crypt >= ZIO_CRYPT_OFF &&
+           zp->zp_crypt < ZIO_CRYPT_FUNCTIONS &&
 	    zp->zp_type < DMU_OT_NUMTYPES &&
 	    zp->zp_level < 32 &&
 	    zp->zp_copies > 0 &&
@@ -724,7 +772,7 @@ zio_write(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp,
 
 zio_t *
 zio_rewrite(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp, void *data,
-    uint64_t size, zio_done_func_t *done, void *private, int priority,
+    uint64_t size, zio_prop_t *zp, zio_done_func_t *done, void *private, int priority,
     enum zio_flag flags, zbookmark_t *zb)
 {
 	zio_t *zio;
@@ -732,6 +780,9 @@ zio_rewrite(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp, void *data,
 	zio = zio_create(pio, spa, txg, bp, data, size, done, private,
 	    ZIO_TYPE_WRITE, priority, flags, NULL, 0, zb,
 	    ZIO_STAGE_OPEN, ZIO_REWRITE_PIPELINE);
+
+	if (zp != NULL)
+		zio->io_prop = *zp;
 
 	return (zio);
 }
@@ -791,13 +842,17 @@ zio_claim(zio_t *pio, spa_t *spa, uint64_t txg, const blkptr_t *bp,
 	 * All claims *must* be resolved in the first txg -- before the SPA
 	 * starts allocating blocks -- so that nothing is allocated twice.
 	 * If txg == 0 we just verify that the block is claimable.
+	 *
+	 * This means that the claim is happening for encrypted datasets
+	 * when the key is *not* present.
 	 */
 	ASSERT3U(spa->spa_uberblock.ub_rootbp.blk_birth, <, spa_first_txg(spa));
 	ASSERT(txg == spa_first_txg(spa) || txg == 0);
 	ASSERT(!BP_GET_DEDUP(bp) || !spa_writeable(spa));	/* zdb(1M) */
 
 	zio = zio_create(pio, spa, txg, bp, NULL, BP_GET_PSIZE(bp),
-	    done, private, ZIO_TYPE_CLAIM, ZIO_PRIORITY_NOW, flags,
+	    done, private, ZIO_TYPE_CLAIM, ZIO_PRIORITY_NOW,
+		flags | ZIO_FLAG_RAW,
 	    NULL, 0, NULL, ZIO_STAGE_OPEN, ZIO_CLAIM_PIPELINE);
 
 	return (zio);
@@ -875,7 +930,7 @@ zio_write_phys(zio_t *pio, vdev_t *vd, uint64_t offset, uint64_t size,
 		 */
 		void *wbuf = zio_buf_alloc(size);
 		bcopy(data, wbuf, size);
-		zio_push_transform(zio, wbuf, size, size, NULL);
+		zio_push_transform(zio, wbuf, size, size, NULL, NULL);
 	}
 
 	return (zio);
@@ -979,14 +1034,46 @@ zio_read_bp_init(zio_t *zio)
 {
 	blkptr_t *bp = zio->io_bp;
 
-	if (BP_GET_COMPRESS(bp) != ZIO_COMPRESS_OFF &&
-	    zio->io_child_type == ZIO_CHILD_LOGICAL &&
-	    !(zio->io_flags & ZIO_FLAG_RAW)) {
-		uint64_t psize = BP_GET_PSIZE(bp);
-		void *cbuf = zio_buf_alloc(psize);
+    /*
+     * Don't add compression/crypto to the transform stack if this is a
+     * raw read (ie scrub/resilver).
+     * We don't need the actual data in that case and the decrypt would fail
+     * due to a lack of a key (in which case the datasets wouldn't
+     * be mounted but still need to be scrubbed).
+     */
+    if (zio->io_child_type == ZIO_CHILD_LOGICAL &&
+        !(zio->io_flags & ZIO_FLAG_RAW)) {
+        uint64_t psize = BP_GET_PSIZE(bp);
+        void *cbuf;
 
-		zio_push_transform(zio, cbuf, psize, psize, zio_decompress);
-	}
+        if (BP_GET_COMPRESS(bp) != ZIO_COMPRESS_OFF) {
+            cbuf = zio_buf_alloc(psize);
+            zio_push_transform(zio, cbuf, psize, psize,
+                               zio_decompress, NULL);
+        }
+        if (BP_IS_ENCRYPTED(bp)) {
+            zcrypt_key_t *key;
+            ASSERT(spa_version(zio->io_spa) >= SPA_VERSION_CRYPTO);
+
+            key = zcrypt_key_lookup(zio->io_spa,
+                                    zio->io_bookmark.zb_objset, bp->blk_birth);
+            if (key == NULL) {
+                zio->io_error = ENOKEY;
+#if _KERNEL
+				printk("zio read_bp_init NO KEY error\n");
+#endif
+                return (ZIO_PIPELINE_CONTINUE);
+            }
+#if _KERNEL
+			printk("zio read_bp_init calling decrypt\n");
+#endif
+            zcrypt_key_hold(key, zio);
+            cbuf = zio_buf_alloc(psize);
+            zio_push_transform(zio, cbuf, psize, psize,
+                               zio_decrypt, (void *)key);
+        }
+    }
+
 
 	if (!dmu_ot[BP_GET_TYPE(bp)].ot_metadata && BP_GET_LEVEL(bp) == 0)
 		zio->io_flags |= ZIO_FLAG_DONT_CACHE;
@@ -1006,10 +1093,17 @@ zio_write_bp_init(zio_t *zio)
 	spa_t *spa = zio->io_spa;
 	zio_prop_t *zp = &zio->io_prop;
 	enum zio_compress compress = zp->zp_compress;
+    int crypt = zp->zp_crypt;
+    int checksum = zp->zp_checksum;
+    int type = zp->zp_type;
 	blkptr_t *bp = zio->io_bp;
 	uint64_t lsize = zio->io_size;
 	uint64_t psize = lsize;
 	int pass = 1;
+    uint32_t mac[3];        /* Max maclen is 96 bits */
+    uint32_t iv[3];         /* Max ivlen is 96 bits */
+    void *ebuf;
+    zcrypt_key_t *key;
 
 	/*
 	 * If our children haven't all reached the ready stage,
@@ -1019,9 +1113,34 @@ zio_write_bp_init(zio_t *zio)
 	    zio_wait_for_children(zio, ZIO_CHILD_LOGICAL, ZIO_WAIT_READY))
 		return (ZIO_PIPELINE_STOP);
 
-	if (!IO_IS_ALLOCATING(zio))
-		return (ZIO_PIPELINE_CONTINUE);
+	if (!IO_IS_ALLOCATING(zio)) {
+        if ((type = BP_GET_TYPE(bp)) == DMU_OT_INTENT_LOG &&
+            BP_IS_ENCRYPTED(bp)) {
+            ASSERT3U(BP_GET_CHECKSUM(zio->io_bp), ==,
+                     ZIO_CHECKSUM_ZILOG2);
 
+            key = zcrypt_key_lookup(zio->io_spa,
+                                    zio->io_bookmark.zb_objset, zio->io_txg);
+            VERIFY(key != NULL);
+            zcrypt_key_hold(key, zio);
+
+#if _KERNEL
+    printk("zio encrypt_data 1\n");
+#endif
+
+            zio->io_error = zio_encrypt_data(crypt, key,
+                                             &zio->io_bookmark, zio->io_txg, type, zp->zp_dedup,
+                                             zio->io_data, psize, &ebuf,
+                                             (char *)&mac, (char *)&iv);
+            zcrypt_key_release(key, zio);
+
+            ZC_SET_CRYPT_MAC(ebuf, lsize, mac);
+            zio_push_transform(zio, ebuf, psize, psize, NULL, NULL);
+            return (ZIO_PIPELINE_CONTINUE);
+        } else {
+            return (ZIO_PIPELINE_CONTINUE);
+        }
+    }
 	ASSERT(zio->io_child_type != ZIO_CHILD_DDT);
 
 	if (zio->io_bp_override) {
@@ -1078,9 +1197,48 @@ zio_write_bp_init(zio_t *zio)
 			zio_buf_free(cbuf, lsize);
 		} else {
 			ASSERT(psize < lsize);
-			zio_push_transform(zio, cbuf, psize, lsize, NULL);
+			zio_push_transform(zio, cbuf, psize, lsize, NULL, NULL);
 		}
 	}
+
+    if (psize > 0 && crypt != ZIO_CRYPT_OFF) {
+        key = zcrypt_key_lookup(zio->io_spa,
+                                zio->io_bookmark.zb_objset, zio->io_txg);
+        VERIFY(key != NULL);
+        zcrypt_key_hold(key, zio);
+
+#if _KERNEL
+    printk("zio encrypt_data 2\n");
+#endif
+        VERIFY3U(zio_encrypt_data(crypt, key, &zio->io_bookmark,
+                                  zio->io_txg, type, zp->zp_dedup,
+                                  zio->io_data, psize, &ebuf,
+                                  (char *)&mac, (char *)&iv), ==, 0);
+#if _KERNEL
+        printk("zio encrypt_data 2 key_release\n");
+#endif
+
+        zcrypt_key_release(key, zio);
+
+#if _KERNEL
+        printk("zio encrypt_data 2 push_transform\n");
+#endif
+        zio_push_transform(zio, ebuf, psize, psize, NULL, NULL);
+        ASSERT3U(checksum, ==, ZIO_CHECKSUM_SHA256_MAC);
+    }
+
+    /*
+     * If we aren't encrypting make sure the checksum isn't the
+     * truncated SHA256+MAC variant - force to SHA256 instead.
+     */
+    if (checksum == ZIO_CHECKSUM_SHA256_MAC && crypt == ZIO_CRYPT_OFF) {
+        ASSERT3U(spa_version(zio->io_spa), >=, SPA_VERSION_CRYPTO);
+        checksum = ZIO_CHECKSUM_SHA256;
+    }
+
+    ASSERT(checksum != ZIO_CHECKSUM_INHERIT);
+    ASSERT(compress != ZIO_COMPRESS_INHERIT);
+
 
 	/*
 	 * The final pass of spa_sync() must be all rewrites, but the first
@@ -1113,13 +1271,23 @@ zio_write_bp_init(zio_t *zio)
 		BP_SET_LEVEL(bp, zp->zp_level);
 		BP_SET_DEDUP(bp, zp->zp_dedup);
 		BP_SET_BYTEORDER(bp, ZFS_HOST_BYTEORDER);
+		if (crypt != ZIO_CRYPT_OFF) {
+			ASSERT(checksum != ZIO_CRYPT_INHERIT);
+			ASSERT3U(checksum, ==, ZIO_CHECKSUM_SHA256_MAC);
+
+			BP_SET_CRYPT(bp, 1);
+			BP_SET_CRYPT_MAC(bp, mac);
+			BP_SET_CRYPT_IV(bp, iv);
+		} else {
+			BP_SET_CRYPT(bp, 0);
+			ASSERT3U(checksum, !=, ZIO_CHECKSUM_SHA256_MAC);
+		}
 		if (zp->zp_dedup) {
 			ASSERT(zio->io_child_type == ZIO_CHILD_LOGICAL);
 			ASSERT(!(zio->io_flags & ZIO_FLAG_IO_REWRITE));
 			zio->io_pipeline = ZIO_DDT_WRITE_PIPELINE;
 		}
 	}
-
 	return (ZIO_PIPELINE_CONTINUE);
 }
 
@@ -1546,8 +1714,8 @@ zio_rewrite_gang(zio_t *pio, blkptr_t *bp, zio_gang_node_t *gn, void *data)
 
 	if (gn != NULL) {
 		zio = zio_rewrite(pio, pio->io_spa, pio->io_txg, bp,
-		    gn->gn_gbh, SPA_GANGBLOCKSIZE, NULL, NULL, pio->io_priority,
-		    ZIO_GANG_CHILD_FLAGS(pio), &pio->io_bookmark);
+		    gn->gn_gbh, SPA_GANGBLOCKSIZE, NULL, NULL, NULL,
+			pio->io_priority, ZIO_GANG_CHILD_FLAGS(pio), &pio->io_bookmark);
 		/*
 		 * As we rewrite each gang header, the pipeline will compute
 		 * a new gang block header checksum for it; but no one will
@@ -1569,7 +1737,7 @@ zio_rewrite_gang(zio_t *pio, blkptr_t *bp, zio_gang_node_t *gn, void *data)
 			zio->io_pipeline &= ~ZIO_VDEV_IO_STAGES;
 	} else {
 		zio = zio_rewrite(pio, pio->io_spa, pio->io_txg, bp,
-		    data, BP_GET_PSIZE(bp), NULL, NULL, pio->io_priority,
+			data, BP_GET_PSIZE(bp), NULL, NULL, NULL, pio->io_priority,
 		    ZIO_GANG_CHILD_FLAGS(pio), &pio->io_bookmark);
 	}
 
@@ -1696,7 +1864,18 @@ zio_gang_tree_issue(zio_t *pio, zio_gang_node_t *gn, blkptr_t *bp, void *data)
 	int g;
 
 	ASSERT(BP_IS_GANG(bp) == !!gn);
-	ASSERT(BP_GET_CHECKSUM(bp) == BP_GET_CHECKSUM(gio->io_bp));
+	/*
+	 * For encrypted data we could have a gang leader that has
+	 * sha256+mac but the bp just has sha256 because it is an L0
+	 * block of DMU type none and thus encryption off.
+	 * !spa_writable check allows for zdb_read_block()
+	 */
+	ASSERT(!spa_writeable(pio->io_spa) ||
+	    (BP_IS_ENCRYPTED(gio->io_bp) &&
+	    (BP_GET_CHECKSUM(bp) == BP_GET_CHECKSUM(gio->io_bp)) ||
+	    (BP_GET_CHECKSUM(bp) == ZIO_CHECKSUM_SHA256 &&
+	    BP_GET_CRYPT(bp) == 0)) ||
+	    (BP_GET_CHECKSUM(bp) == BP_GET_CHECKSUM(gio->io_bp)));
 	ASSERT(BP_GET_LSIZE(bp) == BP_GET_PSIZE(bp) || gn == gio->io_gang_tree);
 
 	/*
@@ -1808,6 +1987,10 @@ zio_write_gang_block(zio_t *pio)
 	zio_prop_t zp;
 	int g, error;
 
+	if (BP_IS_ENCRYPTED(gio->io_bp) &&
+	    gbh_copies == spa_max_replication(spa))
+		gbh_copies--;
+
 	error = metaslab_alloc(spa, spa_normal_class(spa), SPA_GANGBLOCKSIZE,
 	    bp, gbh_copies, txg, pio == gio ? NULL : gio->io_bp,
 	    METASLAB_HINTBP_FAVOR | METASLAB_GANG_HEADER);
@@ -1830,8 +2013,9 @@ zio_write_gang_block(zio_t *pio)
 	/*
 	 * Create the gang header.
 	 */
-	zio = zio_rewrite(pio, spa, txg, bp, gbh, SPA_GANGBLOCKSIZE, NULL, NULL,
-	    pio->io_priority, ZIO_GANG_CHILD_FLAGS(pio), &pio->io_bookmark);
+	zio = zio_rewrite(pio, spa, txg, bp, gbh, SPA_GANGBLOCKSIZE,
+		NULL, NULL, NULL, pio->io_priority,
+		ZIO_GANG_CHILD_FLAGS(pio), &pio->io_bookmark);
 
 	/*
 	 * Create and nowait the gang children.
@@ -1843,9 +2027,15 @@ zio_write_gang_block(zio_t *pio)
 
 		zp.zp_checksum = gio->io_prop.zp_checksum;
 		zp.zp_compress = ZIO_COMPRESS_OFF;
+        zp.zp_crypt = ZIO_CRYPT_OFF;
 		zp.zp_type = DMU_OT_NONE;
 		zp.zp_level = 0;
-		zp.zp_copies = gio->io_prop.zp_copies;
+        if (zio->io_prop.zp_copies == spa_max_replication(spa) &&
+		    BP_IS_ENCRYPTED(bp)) {
+			zp.zp_copies = gio->io_prop.zp_copies--;
+		} else {
+            zp.zp_copies = gio->io_prop.zp_copies;
+        }
 		zp.zp_dedup = 0;
 		zp.zp_dedup_verify = 0;
 
@@ -2183,7 +2373,7 @@ zio_ddt_write(zio_t *zio)
 		    zio_ddt_ditto_write_done, dde, zio->io_priority,
 		    ZIO_DDT_CHILD_FLAGS(zio), &zio->io_bookmark);
 
-		zio_push_transform(dio, zio->io_data, zio->io_size, 0, NULL);
+		zio_push_transform(dio, zio->io_data, zio->io_size, 0, NULL, NULL);
 		dde->dde_lead_zio[DDT_PHYS_DITTO] = dio;
 	}
 
@@ -2205,7 +2395,7 @@ zio_ddt_write(zio_t *zio)
 		    zio_ddt_child_write_done, dde, zio->io_priority,
 		    ZIO_DDT_CHILD_FLAGS(zio), &zio->io_bookmark);
 
-		zio_push_transform(cio, zio->io_data, zio->io_size, 0, NULL);
+		zio_push_transform(cio, zio->io_data, zio->io_size, 0, NULL, NULL);
 		dde->dde_lead_zio[p] = cio;
 	}
 
@@ -2267,6 +2457,10 @@ zio_dva_allocate(zio_t *zio)
 	ASSERT3U(zio->io_prop.zp_copies, <=, spa_max_replication(spa));
 	ASSERT3U(zio->io_size, ==, BP_GET_PSIZE(bp));
 
+	if (zio->io_prop.zp_copies == spa_max_replication(spa) &&
+	    BP_IS_ENCRYPTED(bp)) {
+		zio->io_prop.zp_copies--;
+	}
 	/*
 	 * The dump device does not support gang blocks so allocation on
 	 * behalf of the dump device (i.e. ZIO_FLAG_NODATA) must avoid
@@ -2340,7 +2534,7 @@ zio_dva_unallocate(zio_t *zio, zio_gang_node_t *gn, blkptr_t *bp)
  */
 int
 zio_alloc_zil(spa_t *spa, uint64_t txg, blkptr_t *new_bp, uint64_t size,
-    boolean_t use_slog)
+              boolean_t use_slog, int crypt)
 {
 	int error = 1;
 
@@ -2367,6 +2561,7 @@ zio_alloc_zil(spa_t *spa, uint64_t txg, blkptr_t *new_bp, uint64_t size,
 		BP_SET_LSIZE(new_bp, size);
 		BP_SET_PSIZE(new_bp, size);
 		BP_SET_COMPRESS(new_bp, ZIO_COMPRESS_OFF);
+        BP_SET_CRYPT(new_bp, (crypt != ZIO_CRYPT_OFF));
 		BP_SET_CHECKSUM(new_bp,
 		    spa_version(spa) >= SPA_VERSION_SLIM_ZIL
 		    ? ZIO_CHECKSUM_ZILOG2 : ZIO_CHECKSUM_ZILOG);
@@ -2446,7 +2641,7 @@ zio_vdev_io_start(zio_t *zio)
 			bcopy(zio->io_data, abuf, zio->io_size);
 			bzero(abuf + zio->io_size, asize - zio->io_size);
 		}
-		zio_push_transform(zio, abuf, asize, asize, zio_subblock);
+		zio_push_transform(zio, abuf, asize, asize, zio_subblock, NULL);
 	}
 
 	ASSERT(P2PHASE(zio->io_offset, align) == 0);

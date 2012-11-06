@@ -278,6 +278,7 @@ ddt_bp_create(enum zio_checksum checksum,
 	BP_SET_LSIZE(bp, DDK_GET_LSIZE(ddk));
 	BP_SET_PSIZE(bp, DDK_GET_PSIZE(ddk));
 	BP_SET_COMPRESS(bp, DDK_GET_COMPRESS(ddk));
+    BP_SET_CRYPT(bp, DDK_GET_CRYPT(ddk));
 	BP_SET_CHECKSUM(bp, checksum);
 	BP_SET_TYPE(bp, DMU_OT_DEDUP);
 	BP_SET_LEVEL(bp, 0);
@@ -294,6 +295,7 @@ ddt_key_fill(ddt_key_t *ddk, const blkptr_t *bp)
 	DDK_SET_LSIZE(ddk, BP_GET_LSIZE(bp));
 	DDK_SET_PSIZE(ddk, BP_GET_PSIZE(bp));
 	DDK_SET_COMPRESS(ddk, BP_GET_COMPRESS(bp));
+    DDK_SET_CRYPT(ddk, BP_GET_CRYPT(bp));
 }
 
 void
@@ -377,11 +379,15 @@ ddt_stat_generate(ddt_t *ddt, ddt_entry_t *dde, ddt_stat_t *dds)
 	for (p = 0; p < DDT_PHYS_TYPES; p++, ddp++) {
 		uint64_t dsize = 0;
 		uint64_t refcnt = ddp->ddp_refcnt;
+        uint64_t dvas = SPA_DVAS_PER_BP;
 
 		if (ddp->ddp_phys_birth == 0)
 			continue;
 
-		for (d = 0; d < SPA_DVAS_PER_BP; d++)
+        if (DDK_GET_CRYPT(ddk) == 1)
+			dvas--;
+
+		for (d = 0; d < dvas; d++)
 			dsize += dva_get_dsize_sync(spa, &ddp->ddp_dva[d]);
 
 		dds->dds_blocks += 1;
@@ -584,8 +590,12 @@ ddt_ditto_copies_present(ddt_entry_t *dde)
 	dva_t *dva = ddp->ddp_dva;
 	int copies = 0 - DVA_GET_GANG(dva);
 	int d;
+    uint64_t ndvas = SPA_DVAS_PER_BP;
 
-	for (d = 0; d < SPA_DVAS_PER_BP; d++, dva++)
+	if (DDK_GET_CRYPT(&dde->dde_key) == 1)
+		ndvas--;
+
+	for (d = 0; d < ndvas; d++, dva++)
 		if (DVA_IS_VALID(dva))
 			copies++;
 
@@ -1005,7 +1015,8 @@ ddt_repair_entry(ddt_t *ddt, ddt_entry_t *dde, ddt_entry_t *rdde, zio_t *rio)
 			continue;
 		ddt_bp_create(ddt->ddt_checksum, ddk, ddp, &blk);
 		zio_nowait(zio_rewrite(zio, zio->io_spa, 0, &blk,
-		    rdde->dde_repair_data, DDK_GET_PSIZE(rddk), NULL, NULL,
+		    rdde->dde_repair_data, DDK_GET_PSIZE(rddk),
+            NULL, NULL, NULL,
 		    ZIO_PRIORITY_SYNC_WRITE, ZIO_DDT_CHILD_FLAGS(zio), NULL));
 	}
 

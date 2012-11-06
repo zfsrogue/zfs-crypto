@@ -44,6 +44,7 @@
 #include <sys/fs/zfs.h>
 #include <sys/dmu.h>
 #include <sys/dsl_prop.h>
+#include <sys/dsl_crypto.h>
 #include <sys/dsl_dataset.h>
 #include <sys/dsl_deleg.h>
 #include <sys/spa.h>
@@ -1495,6 +1496,11 @@ zfs_set_version(zfs_sb_t *zsb, uint64_t newvers)
 	error = zap_update(os, MASTER_NODE_OBJ, ZPL_VERSION_STR,
 	    8, 1, &newvers, tx);
 
+#if _KERNEL
+    printk("vfsops setting zfs_version zap_update %d\n", error);
+#endif
+
+
 	if (error) {
 		dmu_tx_commit(tx);
 		return (error);
@@ -1551,6 +1557,10 @@ zfs_get_zplprop(objset_t *os, zfs_prop_t prop, uint64_t *value)
 
 	if (os != NULL)
 		error = zap_lookup(os, MASTER_NODE_OBJ, pname, 8, 1, value);
+
+#if _KERNEL
+	printk(" get_zplprop zap_lookup '%s' %d\n", pname, error);
+#endif
 
 	if (error == ENOENT) {
 		/* No value set, use the default value */

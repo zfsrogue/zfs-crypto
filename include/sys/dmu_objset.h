@@ -43,6 +43,7 @@ extern "C" {
 extern krwlock_t os_lock;
 
 struct dsl_dataset;
+struct dsl_crypto_ctx;
 struct dmu_tx;
 
 #define	OBJSET_PHYS_SIZE 2048
@@ -91,6 +92,7 @@ struct objset {
 	uint8_t os_primary_cache;
 	uint8_t os_secondary_cache;
 	uint8_t os_sync;
+    uint8_t os_crypt;
 
 	/* no lock needed: */
 	struct dmu_tx *os_synctx; /* XXX sketchy */
@@ -116,6 +118,9 @@ struct objset {
 
 	/* SA layout/attribute registration */
 	sa_os_t *os_sa;
+
+    /* destroying when crypto keys aren't present */
+    boolean_t os_destroy_nokey;
 };
 
 #define	DMU_META_OBJSET		0
@@ -138,9 +143,10 @@ void dmu_objset_disown(objset_t *os, void *tag);
 int dmu_objset_from_ds(struct dsl_dataset *ds, objset_t **osp);
 
 int dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
+                      struct dsl_crypto_ctx *crypto_ctx,
     void (*func)(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx), void *arg);
 int dmu_objset_clone(const char *name, struct dsl_dataset *clone_origin,
-    uint64_t flags);
+    struct dsl_crypto_ctx *crypto_ctx, uint64_t flags);
 int dmu_objset_destroy(const char *name, boolean_t defer);
 int dmu_objset_snapshot(char *fsname, char *snapname, char *tag,
     struct nvlist *props, boolean_t recursive, boolean_t temporary, int fd);
@@ -162,7 +168,7 @@ timestruc_t dmu_objset_snap_cmtime(objset_t *os);
 void dmu_objset_sync(objset_t *os, zio_t *zio, dmu_tx_t *tx);
 boolean_t dmu_objset_is_dirty(objset_t *os, uint64_t txg);
 objset_t *dmu_objset_create_impl(spa_t *spa, struct dsl_dataset *ds,
-    blkptr_t *bp, dmu_objset_type_t type, dmu_tx_t *tx);
+    blkptr_t *bp, dmu_objset_type_t type, struct dsl_crypto_ctx *dcc, dmu_tx_t *tx);
 int dmu_objset_open_impl(spa_t *spa, struct dsl_dataset *ds, blkptr_t *bp,
     objset_t **osp);
 void dmu_objset_evict(objset_t *os);

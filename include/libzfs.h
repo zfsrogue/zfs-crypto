@@ -134,6 +134,7 @@ enum {
 	EZFS_DIFF,		/* general failure of zfs diff */
 	EZFS_DIFFDATA,		/* bad zfs diff data */
 	EZFS_POOLREADONLY,	/* pool is in read-only mode */
+    EZFS_KEYERR,            /* crypto key not present or invalid */
 	EZFS_UNKNOWN
 };
 
@@ -392,6 +393,28 @@ extern int zpool_get_physpath(zpool_handle_t *, char *, size_t);
 extern void zpool_explain_recover(libzfs_handle_t *, const char *, int,
     nvlist_t *);
 
+
+/* Crypto related functions */
+typedef enum {
+    ZFS_CRYPTO_CREATE,
+    ZFS_CRYPTO_PCREATE,
+    ZFS_CRYPTO_CLONE,
+    ZFS_CRYPTO_RECV,
+    ZFS_CRYPTO_KEY_LOAD,
+    ZFS_CRYPTO_KEY_CHANGE
+} zfs_crypto_zckey_t;
+
+extern int zfs_crypto_zckey(libzfs_handle_t *, zfs_crypto_zckey_t,
+                            nvlist_t *, struct zfs_cmd *);
+extern int zfs_crypto_rename_check(zfs_handle_t *, struct zfs_cmd *);
+extern boolean_t zfs_valid_keysource(char *);
+extern boolean_t zfs_valid_set_keysource_change(zfs_handle_t *, char *, char *);
+extern boolean_t zfs_mount_crypto_check(zfs_handle_t *);
+extern void libzfs_crypto_set_key(libzfs_handle_t *, char *, size_t);
+extern void zfs_crypto_set_key(zfs_handle_t *, char *, size_t);
+extern void zfs_crypto_set_clone_newkey(zfs_handle_t *);
+
+
 /*
  * Basic handle manipulations.  These functions do not create or destroy the
  * underlying datasets, only the references to them.
@@ -647,6 +670,7 @@ extern zfs_handle_t *zfs_path_to_zhandle(libzfs_handle_t *, char *, zfs_type_t);
 extern boolean_t zfs_dataset_exists(libzfs_handle_t *, const char *,
     zfs_type_t);
 extern int zfs_spa_version(zfs_handle_t *, int *);
+extern int zfs_parent_name(const char *, char *, size_t);
 extern int zfs_append_partition(char *path, size_t max_len);
 extern int zfs_resolve_shortname(const char *name, char *path, size_t pathlen);
 extern int zfs_strcmp_pathname(char *name, char *cmp_name, int wholedisk);
@@ -657,6 +681,7 @@ extern int zfs_strcmp_pathname(char *name, char *cmp_name, int wholedisk);
 extern boolean_t is_mounted(libzfs_handle_t *, const char *special, char **);
 extern boolean_t zfs_is_mounted(zfs_handle_t *, char **);
 extern int zfs_mount(zfs_handle_t *, const char *, int);
+extern int zfs_mountall(zfs_handle_t *, int);
 extern int zfs_unmount(zfs_handle_t *, const char *, int);
 extern int zfs_unmountall(zfs_handle_t *, int);
 
@@ -683,6 +708,18 @@ extern int zfs_unshareall_bypath(zfs_handle_t *, const char *);
 extern int zfs_unshareall(zfs_handle_t *);
 extern int zfs_deleg_share_nfs(libzfs_handle_t *, char *, char *, char *,
     void *, void *, int, zfs_share_op_t);
+
+/*
+ * Crypto key functions for datasets
+ */
+extern boolean_t zfs_is_encrypted(zfs_handle_t *);
+extern boolean_t zfs_changing_key(zfs_handle_t *);
+
+extern int zfs_key_load(zfs_handle_t *, boolean_t, boolean_t, boolean_t);
+extern int zfs_key_unload(zfs_handle_t *, boolean_t);
+extern int zfs_key_change(zfs_handle_t *, boolean_t, nvlist_t *);
+extern int zfs_key_new(zfs_handle_t *);
+
 
 /*
  * Utility function to convert a number to a human-readable form.

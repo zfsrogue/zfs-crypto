@@ -72,6 +72,7 @@
 #include <sys/dsl_scan.h>
 #include <sharefs/share.h>
 #include <sys/dmu_objset.h>
+#include <sys/dsl_crypto.h>
 #include <sys/fm/util.h>
 
 #include <linux/miscdevice.h>
@@ -126,6 +127,7 @@ static int zfs_check_clearable(char *dataset, nvlist_t *props,
 static int zfs_fill_zplprops_root(uint64_t, nvlist_t *, nvlist_t *,
     boolean_t *);
 int zfs_set_prop_nvlist(const char *, zprop_source_t, nvlist_t *, nvlist_t **);
+static int zfs_get_crypto_ctx(zfs_cmd_t *zc, dsl_crypto_ctx_t *dcc);
 
 static void
 history_str_free(char *buf)
@@ -182,11 +184,17 @@ zfs_earlier_version(const char *name, int version)
 
 	if (spa_open(name, &spa, FTAG) == 0) {
 		if (spa_version(spa) < version) {
+#if _KERNEL
+		  printk(" earlier version %d < %d\n", spa_version(spa), version);
+#endif
 			spa_close(spa, FTAG);
 			return (1);
 		}
 		spa_close(spa, FTAG);
 	}
+#if _KERNEL
+	printk(" version OK\n");
+#endif
 	return (0);
 }
 
@@ -201,10 +209,17 @@ zpl_earlier_version(const char *name, int version)
 	objset_t *os;
 	boolean_t rc = B_TRUE;
 
+#if _KERNEL
+	printk(" XXXX zpl_earlier_version %d\n", version);
+#endif
+
 	if (dmu_objset_hold(name, FTAG, &os) == 0) {
 		uint64_t zplversion;
 
 		if (dmu_objset_type(os) != DMU_OST_ZFS) {
+#if _KERNEL
+		  printk(" zpl_earlier_version NOT FS!\n");
+#endif
 			dmu_objset_rele(os, FTAG);
 			return (B_TRUE);
 		}
@@ -212,6 +227,10 @@ zpl_earlier_version(const char *name, int version)
 		if (zfs_get_zplprop(os, ZFS_PROP_VERSION, &zplversion) == 0)
 			rc = zplversion < version;
 		dmu_objset_rele(os, FTAG);
+#if _KERNEL
+		printk(" XXXX zpl_earlier_version %d < %d\n",
+		       (int)zplversion, (int)version);
+#endif
 	}
 	return (rc);
 }
@@ -984,6 +1003,53 @@ zfs_secpolicy_tmp_snapshot(zfs_cmd_t *zc, cred_t *cr)
 }
 
 /*
+ * The crypto opertations on datasets (including those at
+ * create/recv time) fall into two security policies,
+ * key use (protected by the "key" delegation):
+ *      load, unload, inherit
+ * and key change * (protected by the "keychange" delegation:
+ *      wrapping key change, new data encryption key
+ */
+static int
+zfs_secpolicy_crypto_keyuse(zfs_cmd_t *zc, cred_t *cr)
+{
+    int err;
+    char val[MAXNAMELEN];           /* value ignored */
+    char setpoint[MAXNAMELEN];      /* dataset where keysource is set */
+
+
+    if ((err = zfs_secpolicy_write_perms(zc->zc_name, ZFS_DELEG_PERM_KEY,
+                                         cr)) != 0)
+        return (err);
+
+    // FIXME
+    //if (crgetzone(cr) == global_zone)
+    //   return (0);
+
+    /*
+     * If not in the global zone, be sure the key is not inherited
+     * from the global zone
+     */
+    if (dsl_prop_get(zc->zc_name, zfs_prop_to_name(ZFS_PROP_KEYSOURCE), 1,
+                     sizeof (val), val, setpoint) != 0)
+        return (ENOENT);
+
+    // FIXME
+    //if (strcmp(setpoint, ZONE_INVISIBLE_SOURCE) == 0)
+    //    return (EPERM);
+
+    return (0);
+}
+
+static int
+zfs_secpolicy_crypto_keychange(zfs_cmd_t *zc, cred_t *cr)
+{
+    return (zfs_secpolicy_write_perms(zc->zc_name,
+                                      ZFS_DELEG_PERM_KEYCHANGE, cr));
+}
+
+
+/*
  * Returns the nvlist as specified by the user in the zfs_cmd_t.
  */
 static int
@@ -1152,6 +1218,7 @@ zfs_ioc_pool_create(zfs_cmd_t *zc)
 	nvlist_t *rootprops = NULL;
 	nvlist_t *zplprops = NULL;
 	char *buf;
+    dsl_crypto_ctx_t dcc = { 0 };
 
 	if ((error = get_nvlist(zc->zc_nvlist_conf, zc->zc_nvlist_conf_size,
 	    zc->zc_iflags, &config)))
@@ -1163,6 +1230,10 @@ zfs_ioc_pool_create(zfs_cmd_t *zc)
 		nvlist_free(config);
 		return (error);
 	}
+
+    if ((error = zfs_get_crypto_ctx(zc, &dcc)) != 0) {
+        return (error);
+    }
 
 	if (props) {
 		nvlist_t *nvl = NULL;
@@ -1193,7 +1264,7 @@ zfs_ioc_pool_create(zfs_cmd_t *zc)
 
 	buf = history_str_get(zc);
 
-	error = spa_create(zc->zc_name, config, props, buf, zplprops);
+	error = spa_create(zc->zc_name, config, props, buf, &dcc, zplprops);
 
 	/*
 	 * Set the remaining root properties
@@ -2191,6 +2262,34 @@ zfs_prop_set_special(const char *dsname, zprop_source_t source,
 	return (err);
 }
 
+#if 0
+/*
+ * Handle user quota before it reaches dsl_prop.c, where it is invalid.
+ */
+static int
+zfs_prop_validate(nvpair_t *pair, zprop_source_t source)
+{
+        const char *propname = nvpair_name(pair);
+        nvpair_t *propval = pair;
+        int err;
+
+        if ((err = dsl_prop_decode_value(&propval)) != 0)
+                return (err);
+
+        if (zfs_prop_userquota(propname)) {
+                if (strlen(propname) >= ZAP_MAXNAMELEN)
+                        return (ENAMETOOLONG);
+                if (nvpair_type(propval) != DATA_TYPE_UINT64_ARRAY)
+                        return (EINVAL);
+                if (source == ZPROP_SRC_INHERITED)
+                        return (EINVAL);
+                return (0);
+        }
+
+        return (dsl_prop_validate_nvpair(pair, source));
+}
+#endif
+
 /*
  * This function is best effort. If it fails to set any of the given properties,
  * it continues to set as many as it can and returns the first error
@@ -2215,6 +2314,9 @@ zfs_set_prop_nvlist(const char *dsname, zprop_source_t source, nvlist_t *nvl,
 	nvlist_t *errors;
 	nvlist_t *retrynvl;
 
+#if _KERNEL
+	printk("set_prop enter\n");
+#endif
 	VERIFY(nvlist_alloc(&genericnvl, NV_UNIQUE_NAME, KM_SLEEP) == 0);
 	VERIFY(nvlist_alloc(&errors, NV_UNIQUE_NAME, KM_SLEEP) == 0);
 	VERIFY(nvlist_alloc(&retrynvl, NV_UNIQUE_NAME, KM_SLEEP) == 0);
@@ -2226,6 +2328,9 @@ retry:
 		zfs_prop_t prop = zfs_name_to_prop(propname);
 		int err = 0;
 
+#if _KERNEL
+		printk("set_prop playing with '%s'\n", propname);
+#endif
 		/* decode the property value */
 		propval = pair;
 		if (nvpair_type(pair) == DATA_TYPE_NVLIST) {
@@ -2278,10 +2383,17 @@ retry:
 			}
 		}
 
+#if _KERNEL
+		printk(" so far %d\n", err);
+#endif
+
 		/* Validate permissions */
 		if (err == 0)
 			err = zfs_check_settable(dsname, pair, CRED());
 
+#if _KERNEL
+		printk(" so far2 %d\n", err);
+#endif
 		if (err == 0) {
 			err = zfs_prop_set_special(dsname, source, pair);
 			if (err == -1) {
@@ -2308,6 +2420,10 @@ retry:
 		nvl = retrynvl;
 		goto retry;
 	}
+
+#if _KERNEL
+	printk("set_prop notempty test\n");
+#endif
 
 	if (!nvlist_empty(genericnvl) &&
 	    dsl_props_set(dsname, source, genericnvl) != 0) {
@@ -2343,6 +2459,13 @@ retry:
 			if (err != 0) {
 				VERIFY(nvlist_add_int32(errors, propname,
 				    err) == 0);
+
+#if _KERNEL
+				printk("set_prop failed on '%s' %d\n",
+				       propname, err);
+#endif
+
+
 			}
 		}
 	}
@@ -2360,6 +2483,12 @@ retry:
 		nvlist_free(errors);
 	else
 		*errlist = errors;
+
+#if _KERNEL
+	printk("set_prop returning with %d\n",
+	       rv);
+#endif
+
 
 	return (rv);
 }
@@ -2770,6 +2899,10 @@ zfs_fill_zplprops_impl(objset_t *os, uint64_t zplver,
 	int error;
 
 	ASSERT(zplprops != NULL);
+#if _KERNEL
+	printk("zfs_fill_zplprops_impl enter\n");
+#endif
+
 
 	/*
 	 * Pull out creator prop choices, if any.
@@ -2800,10 +2933,12 @@ zfs_fill_zplprops_impl(objset_t *os, uint64_t zplver,
 	if ((zplver < ZPL_VERSION_INITIAL || zplver > ZPL_VERSION) ||
 	    (zplver >= ZPL_VERSION_FUID && !fuids_ok) ||
 	    (zplver >= ZPL_VERSION_SA && !sa_ok) ||
+	    (os != NULL && os->os_crypt != ZIO_CRYPT_OFF &&
+	     zplver < ZPL_VERSION_SA) ||
 	    (zplver < ZPL_VERSION_NORMALIZATION &&
-	    (norm != ZFS_PROP_UNDEFINED || u8 != ZFS_PROP_UNDEFINED ||
-	    sense != ZFS_PROP_UNDEFINED)))
-		return (ENOTSUP);
+	     (norm != ZFS_PROP_UNDEFINED || u8 != ZFS_PROP_UNDEFINED ||
+	      sense != ZFS_PROP_UNDEFINED)))
+	  return (ENOTSUP);
 
 	/*
 	 * Put the version in the zplprops
@@ -2837,6 +2972,16 @@ zfs_fill_zplprops_impl(objset_t *os, uint64_t zplver,
 	if (is_ci)
 		*is_ci = (sense == ZFS_CASE_INSENSITIVE);
 
+#if _KERNEL
+    {
+        uint64_t zplversion = 999;
+
+        zfs_get_zplprop(os, ZFS_PROP_VERSION, &zplversion);
+
+        printk("zfs_fill_zplprops_impl exit, ZFS version %llu\n",
+               zplversion);
+    }
+#endif
 	return (0);
 }
 
@@ -2874,8 +3019,16 @@ zfs_fill_zplprops(const char *dataset, nvlist_t *createprops,
 	if ((error = dmu_objset_hold(parentname, FTAG, &os)) != 0)
 		return (error);
 
+#if _KERNEL
+	printk("fill calling zplprops\n");
+#endif
+
 	error = zfs_fill_zplprops_impl(os, zplver, fuids_ok, sa_ok, createprops,
 	    zplprops, is_ci);
+#if _KERNEL
+	printk("fill exit %d\n",error);
+#endif
+
 	dmu_objset_rele(os, FTAG);
 	return (error);
 }
@@ -2898,6 +3051,65 @@ zfs_fill_zplprops_root(uint64_t spa_vers, nvlist_t *createprops,
 	return (error);
 }
 
+static int
+zfs_get_crypto_ctx(zfs_cmd_t *zc, dsl_crypto_ctx_t *dcc)
+{
+    int error = 0;
+    dsl_dataset_t *ids;
+    zcrypt_key_t *wkey;
+
+    if (zc->zc_crypto.zic_cmd != 0 &&
+        zfs_earlier_version(zc->zc_name, SPA_VERSION_CRYPTO))
+        return (ENOTSUP);
+
+    /*
+     * Special check aes-128-ctr which isn't settable from
+     * userland or at create time, it is only allowed to be
+     * set via the zvol_preallocate_init() path.
+     */
+
+    if (zc->zc_crypto.zic_crypt == ZIO_CRYPT_AES_128_CTR) {
+        return (ENOTSUP);
+    }
+    switch (zc->zc_crypto.zic_cmd) {
+    case ZFS_IOC_CRYPTO_KEY_LOAD:
+        error = zcrypt_key_from_ioc(&zc->zc_crypto,
+                                    &dcc->dcc_wrap_key);
+        if (error != 0) {
+            return (error);
+                }
+        dcc->dcc_clone_newkey = zc->zc_crypto.zic_clone_newkey;
+        dcc->dcc_crypt = zc->zc_crypto.zic_crypt;
+        break;
+    case ZFS_IOC_CRYPTO_KEY_INHERIT:
+        if (dataset_namecheck(zc->zc_crypto.zic_inherit_dsname,
+                              NULL, NULL) != 0) {
+            return (EINVAL);
+        }
+        error = dsl_dataset_hold(zc->zc_crypto.zic_inherit_dsname,
+                                 FTAG, &ids);
+        if (error != 0) {
+            return (error);
+        }
+
+        wkey = zcrypt_keystore_find_wrappingkey(
+                                                dsl_dataset_get_spa(ids), ids->ds_object);
+        dsl_dataset_rele(ids, FTAG);
+        if (wkey == NULL) {
+            return (ENOTSUP);
+        }
+        dcc->dcc_wrap_key = zcrypt_key_copy(wkey);
+        dcc->dcc_clone_newkey = zc->zc_crypto.zic_clone_newkey;
+        dcc->dcc_crypt = zc->zc_crypto.zic_crypt;
+        break;
+    }
+
+    dcc->dcc_salt = zc->zc_crypto.zic_salt;
+
+    return (error);
+}
+
+
 /*
  * inputs:
  * zc_objset_type	type of objset to create (fs vs zvol)
@@ -2913,6 +3125,7 @@ zfs_ioc_create(zfs_cmd_t *zc)
 	objset_t *clone;
 	int error = 0;
 	zfs_creat_t zct;
+    dsl_crypto_ctx_t dcc = { 0 };
 	nvlist_t *nvprops = NULL;
 	void (*cbfunc)(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx);
 	dmu_objset_type_t type = zc->zc_objset_type;
@@ -2943,6 +3156,17 @@ zfs_ioc_create(zfs_cmd_t *zc)
 	zct.zct_zplprops = NULL;
 	zct.zct_props = nvprops;
 
+#if _KERNEL
+    printk("in CREATE\n");
+#endif
+
+    if ((error = zfs_get_crypto_ctx(zc, &dcc)) != 0) {
+#if _KERNEL
+        printk("get_crypto_ctsx failed\n");
+#endif
+        return (error);
+    }
+
 	if (zc->zc_value[0] != '\0') {
 		/*
 		 * We're creating a clone of an existing snapshot.
@@ -2959,7 +3183,7 @@ zfs_ioc_create(zfs_cmd_t *zc)
 			return (error);
 		}
 
-		error = dmu_objset_clone(zc->zc_name, dmu_objset_ds(clone), 0);
+		error = dmu_objset_clone(zc->zc_name, dmu_objset_ds(clone), &dcc, 0);
 		dmu_objset_rele(clone, FTAG);
 		if (error) {
 			nvlist_free(nvprops);
@@ -3021,8 +3245,16 @@ zfs_ioc_create(zfs_cmd_t *zc)
 				return (error);
 			}
 		}
+
+
 		error = dmu_objset_create(zc->zc_name, type,
-		    is_insensitive ? DS_FLAG_CI_DATASET : 0, cbfunc, &zct);
+                                  is_insensitive ? DS_FLAG_CI_DATASET : 0, &dcc,
+                                  cbfunc, &zct);
+#if _KERNEL
+        printk("called dmu_objset_create %d\n", error);
+        zpl_earlier_version(zc->zc_name, 5);
+#endif
+
 		nvlist_free(zct.zct_zplprops);
 	}
 
@@ -3032,10 +3264,21 @@ zfs_ioc_create(zfs_cmd_t *zc)
 	if (error == 0) {
 		error = zfs_set_prop_nvlist(zc->zc_name, ZPROP_SRC_LOCAL,
 		    nvprops, NULL);
+#if _KERNEL
+		printk("zfs_set_prop_nvlist said %d\n", error);
+#endif
+		error = 0;
+
 		if (error != 0)
 			(void) dmu_objset_destroy(zc->zc_name, B_FALSE);
 	}
 	nvlist_free(nvprops);
+
+#if _KERNEL
+	printk("zfs_create returning with %d\n", error);
+    zpl_earlier_version(zc->zc_name, 5);
+#endif
+
 	return (error);
 }
 
@@ -3211,6 +3454,8 @@ zfs_ioc_rollback(zfs_cmd_t *zc)
 	int error;
 	zfs_sb_t *zsb;
 	char *clone_name;
+    dsl_crypto_ctx_t dcc = { 0 };
+    zfs_crypt_key_status_t keystatus;
 
 	error = dsl_dataset_hold(zc->zc_name, FTAG, &ds);
 	if (error)
@@ -3228,11 +3473,26 @@ zfs_ioc_rollback(zfs_cmd_t *zc)
 		return (EINVAL);
 	}
 
-	/*
-	 * Create clone of most recent snapshot.
-	 */
+    /*
+     * For encrypted datasets we need the wrapping key
+     * since rollback is implemented via cloning.
+     */
+    keystatus = dsl_dataset_keystatus(ds, B_FALSE);
+    if (keystatus == ZFS_CRYPT_KEY_UNAVAILABLE) {
+        dsl_dataset_rele(ds, FTAG);
+        return (ENOKEY);
+    } else if (keystatus == ZFS_CRYPT_KEY_AVAILABLE) {
+        dcc.dcc_wrap_key = zcrypt_key_copy(
+                                           zcrypt_keystore_find_wrappingkey(
+                                                                            dsl_dataset_get_spa(ds), ds->ds_object));
+    }
+
+    /*
+     * Create clone of most recent snapshot, passing in
+     * the wrapping key for ds if there is one.
+     */
 	clone_name = kmem_asprintf("%s/%%rollback", zc->zc_name);
-	error = dmu_objset_clone(clone_name, ds->ds_prev, DS_FLAG_INCONSISTENT);
+	error = dmu_objset_clone(clone_name, ds->ds_prev, &dcc, DS_FLAG_INCONSISTENT);
 	if (error)
 		goto out;
 
@@ -3331,6 +3591,10 @@ zfs_check_settable(const char *dsname, nvpair_t *pair, cred_t *cr)
 	uint64_t intval;
 	int err;
 
+#if _KERNEL
+	printk("check_settable('%s') %d\n", propname, prop);
+#endif
+
 	if (prop == ZPROP_INVAL) {
 		if (zfs_prop_user(propname)) {
 			if ((err = zfs_secpolicy_write_perms(dsname,
@@ -3427,6 +3691,29 @@ zfs_check_settable(const char *dsname, nvpair_t *pair, cred_t *cr)
 			return (ENOTSUP);
 		break;
 
+    case ZFS_PROP_ENCRYPTION:
+#if _KERNEL
+		printk(" encryption baby\n");
+#endif
+
+        if (zfs_earlier_version(dsname, SPA_VERSION_CRYPTO))
+            return (ENOTSUP);
+#if _KERNEL
+	printk(" pool version check OK\n");
+#endif
+        if (zpl_earlier_version(dsname, ZPL_VERSION_SA))
+            return (ENOTSUP);
+#if _KERNEL
+	printk(" zpl version check OK\n");
+#endif
+        if (zfs_is_bootfs(dsname) && !BOOTFS_CRYPT_VALID(intval))
+            return (ERANGE);
+#if _KERNEL
+		printk(" encryption OK\n", err);
+#endif
+
+        break;
+
 	case ZFS_PROP_SHARESMB:
 		if (zpl_earlier_version(dsname, ZPL_VERSION_FUID))
 			return (ENOTSUP);
@@ -3445,6 +3732,9 @@ zfs_check_settable(const char *dsname, nvpair_t *pair, cred_t *cr)
 		break;
 	}
 
+#if _KERNEL
+	printk(" check leaving for secpolicy\n", err);
+#endif
 	return (zfs_secpolicy_setprop(dsname, prop, pair, CRED()));
 }
 
@@ -3576,9 +3866,296 @@ next:
 	}
 }
 
+
+/*
+ * Inputs:
+ *
+ * props        properties in the send stream:
+ *              These never include elements of DATA_TYPE_BOOLEAN.
+ *
+ * cmdprops     properties specified with 'zfs receive -o' and 'zfs receive -x':
+ *              These override properties in the send stream. Properties
+ *              specified with -x are represented by elements of
+ *              DATA_TYPE_BOOLEAN.
+ *
+ * origprops    existing received properties:
+ *              These are cleared in the received dataset if they are not found
+ *              in the props list from the send stream, so that the remaining
+ *              set of properties in the dataset matches the set of what was
+ *              received. The original properties are also stashed away before
+ *              attempting the receive so they can be restored in case of an
+ *              error. Before SPA_VERSION_RECVD_PROPS, received properties are
+ *              not distinguished from local settings, and are in fact the local
+ *              settings. To preserve the current effective values of existing
+ *              local settings specified with 'zfs receive -x', we must remove
+ *              those settings from origprops to avoid clearing them in the
+ *              received dataset. Properties specified with 'zfs receive -o' can
+ *              also be removed from origprops, since there is no need to clear
+ *              them if we are going to set them locally to the specified value
+ *              anyway. (Existing local settings are stored in a separate list
+ *              whether or not they are the same as the existing received
+ *              settings, so removing them from origprops does not affect our
+ *              ability to restore the values they had before 'zfs receive -o'
+ *              if the receive fails.)
+ *
+ * version      spa version
+ *
+ * The input property lists are modified as follows:
+ *
+ * If version < SPA_VERSION_RECVD_PROPS:
+ *
+ *     1. Properties specified with -x are removed from both props and cmdprops.
+ *     2. Properties specified with -o are only removed from props so the values
+ *        in cmdprops are applied to the received dataset.
+ *     3. All properties specified on the command line, whether by -x or -o,
+ *        are removed from origprops to avoid clearing them.
+ *
+ * If version >= SPA_VERSION_RECVD_PROPS:
+ *
+ *     We need to set received property values in spite of overriding them
+ *     locally, so no properties are removed from props. Properties specified
+ *     with -x are converted to flags in props and removed from cmdprops.
+ *
+ * Regardless of version, properties specified with -x (in cmdprops) are
+ * guaranteed to retain their current effective values after the receive,
+ * whether or not they are also present in the send stream (in props). At the
+ * end of this function, cmdprops no longer contains any elements of
+ * DATA_TYPE_BOOLEAN.
+ *
+ * After this function modifies the input property lists, the caller passes
+ * cmdprops to zfs_set_prop_nvlist() to complete the following behavior:
+ *
+ * -- zfs receive -o:
+ *
+ * Override properties specified with -o. These properties are sent as
+ * DATA_TYPE_UINT64 or DATA_TYPE_STRING because a value was specified to
+ * override the value in the send stream. Set them on the top level dataset, and
+ * if the send stream is recursive, do the following depending on the property:
+ *
+ * 1) If the property is inheritable, explicitly inherit the property in
+ *    descendant datasets, so the setting is in one place.
+ * 2) If the property is not inheritable, apply the local setting recursively.
+ * 3) If the non-inheritable property is a size property like quota or
+ *    reservation, it does not make sense to set the property recursively, since
+ *    the size value already applies to the entire subtree. In that case, do
+ *    nothing to descendant datasets, unless the value is the default size of
+ *    zero, when it does make sense to apply the setting recursively (e.g.
+ *    quota=none).
+ *
+ * -- zfs receive -x:
+ *
+ * "Exclude" properties specified with -x. These properties are sent as
+ * DATA_TYPE_BOOLEAN because they do not have a value. The idea is to ensure
+ * that the received property does not change the effective value of the
+ * property on the received dataset; that is, to get the behavior that you would
+ * have gotten if the property had been excluded from the send stream (meanwhile
+ * not failing to set the received values), and to do that recursively in the
+ * case of a recursive stream. How that is accomplished depends on the property:
+ *
+ * 1) If the property is inheritable, explicitly inherit the property to
+ *    override the received value. The effect is the same as 'zfs inherit -r' if
+ *    the send stream is recursive.
+ * 2) If the property is not inheritable, set the current effective value
+ *    locally (or the default in the case of a dataset newly created by the
+ *    receive); do that recursively if the send stream is recursive. If the
+ *    property has no default value (e.g. volsize), fail with an error unless
+ *    the send stream is an incremental update.
+ *
+ * In the case of an incremental update, do nothing if the received property is
+ * already overridden by explicit inheritance or a local setting. Checking for
+ * an existing setting and updating the property is atomic.
+ *
+ * If the property is not present in the send stream, do nothing.
+ *
+ * -- Uneditable, set-once, and special properties:
+ *
+ * Specifying an uneditable property with 'receive -o' or 'receive -x' fails the
+ * command and prints an error message. Even set-once properties normally
+ * settable by 'zfs create -o' fail with an error message when specified with
+ * 'zfs receive -o' because they are bound to the sent data. These include
+ *
+ *      normalization
+ *      casesensitivity
+ *      utf8only
+ *      volblocksize
+ * A set-once property that is independent of the sent data may be allowed.
+ *
+ * The following property is editable, but modifications to the property only
+ * affect subsequent writes, not subsequent receives:
+ *
+ *      recordsize
+ *
+ * Specifying recordsize with 'receive -o' or 'receive -x' (default is 128K)
+ * succeeds without a warning message and has no effect on received data.
+ */
+#if 0
+static int
+props_override(nvlist_t *props, nvlist_t *origprops, nvlist_t *cmdprops,
+               uint64_t version, zprop_setflags_t setflags)
+{
+    nvpair_t *pair, *next_pair;
+    int err;
+
+    pair = nvlist_next_nvpair(cmdprops, NULL);
+    while (pair != NULL) {
+        const char *propname = nvpair_name(pair);
+        zfs_prop_t prop = zfs_name_to_prop(propname);
+        nvpair_t *match;
+
+        next_pair = nvlist_next_nvpair(cmdprops, pair);
+
+        if ((nvlist_lookup_nvpair(origprops, propname, &match) == 0)) {
+            if (version < SPA_VERSION_RECVD_PROPS) {
+                /*
+                 * Remove the overridden property from origprops
+                 * to avoid clearing it.
+                 */
+                (void) nvlist_remove_nvpair(origprops, match);
+            } else if (nvpair_type(pair) == DATA_TYPE_BOOLEAN) {
+                /*
+                 * If an existing received property is not
+                 * overridden locally, and we are about to clear
+                 * it because it is not present in the send
+                 * stream, we may need to promote the received
+                 * value to a local value first to preserve the
+                 * effective value. We can't simply avoid
+                 * clearing it by removing it from origprops,
+                 * because the dataset's set of received
+                 * properties must come to equal what is in the
+                 * send stream and not retain anything not in
+                 * the send stream if we want 'send -b' to work
+                 * correctly.
+                 */
+                if ((err = dsl_prop_encode_flag(origprops,
+                                                &match, ZPROP_PRESERVE)) != 0)
+                    return (err);
+            }
+        }
+        if ((nvlist_lookup_nvpair(props, propname, &match) == 0)) {
+            /* overrides a property in the send stream */
+            if (version < SPA_VERSION_RECVD_PROPS) {
+                nvpair_t *propval = pair;
+                uint64_t intval;
+
+                /*
+                 * Unless this is a special property that we do
+                 * not override recursively, don't bother
+                 * receiving the overridden property. Before
+                 * SPA_VERSION_RECVD_PROPS, received properties
+                 * are not distinct from local settings, so we
+                 * can ignore them when they are overridden.
+                 */
+                if (!((prop == ZFS_PROP_QUOTA ||
+                       prop == ZFS_PROP_RESERVATION ||
+                       prop == ZFS_PROP_REFQUOTA ||
+                       prop == ZFS_PROP_REFRESERVATION) &&
+                      (setflags & ZPROP_SET_DESCENDANT) &&
+                      (nvpair_type(pair) != DATA_TYPE_BOOLEAN) &&
+                      (dsl_prop_decode_value(&propval) == 0) &&
+                      (nvpair_value_uint64(propval,
+                                           &intval) == 0) && (intval != 0))) {
+                    (void) nvlist_remove_nvpair(props,
+                                                match);
+                }
+
+                if (nvpair_type(pair) == DATA_TYPE_BOOLEAN) {
+                    /*
+                     * Since the property specified with -x
+                     * has been removed from the received
+                     * props list, it has effectively been
+                     * excluded from the send stream and
+                     * there is nothing we could do to
+                     * exclude it further. We're done with
+                     * it.
+                     */
+                    (void) nvlist_remove_nvpair(cmdprops,
+                                                pair);
+                }
+            } else if (nvpair_type(pair) == DATA_TYPE_BOOLEAN) {
+                /*
+                 * Specifying a property with -x prevents the
+                 * property's recevied value from changing its
+                 * effective value. The idea is to set the
+                 * received value, so it remains available, but
+                 * treat the effective value as if the property
+                 * had been excluded from the send stream.  We
+                 * encode, along with the received value, the
+                 * fact that its effective value must be
+                 * preserved so that dsl_prop_set_sync() can
+                 * carry out the necessary steps atomically.
+                 */
+                if ((err = dsl_prop_encode_flag(props, &match,
+                                                ZPROP_PRESERVE)) != 0)
+                    return (err);
+
+                (void) nvlist_remove_nvpair(cmdprops, pair);
+            }
+        } else {
+            /*
+             * A property specified with -o is still applied locally
+             * even if it does not override a property in the send
+             * stream.
+             */
+            if (nvpair_type(pair) == DATA_TYPE_BOOLEAN) {
+                /*
+                 * If the property is not present in the send
+                 * stream, specifying a property with -x has no
+                 * effect beyond the changes already made to
+                 * origprops.
+                 */
+                (void) nvlist_remove_nvpair(cmdprops, pair);
+            }
+        }
+
+        pair = next_pair;
+    }
+
+    return (0);
+}
+#endif
+
+
+/*
+ * When encryption is enabled the checksum property must always be sha256-mac.
+ * We need to make sure that any cmdline props don't override that. We need to
+ * do this only for checksum because encryption is a setonce property so can't
+ * be overridden anyway. So remove checksum from cmdprops but also add it to
+ * the errors list so the user is informed we "ignored" their request - the recv
+ * will work. This is better than failing the whole recv (which would happen if
+ * we returned an error from this function) since it lets us do a recursive
+ * receive changing checksum for non encrypted datasets from what is in the
+ * stream, while not clobbering the checksum value for encrypted ones.
+ */
+static void
+props_handle_encryption(nvlist_t *props, nvlist_t *origprops,
+                        nvlist_t *cmdprops, nvlist_t *errors)
+{
+    nvpair_t *pair, *next_pair;
+
+    pair = nvlist_next_nvpair(cmdprops, NULL);
+    while (pair != NULL) {
+        const char *propname = nvpair_name(pair);
+        const char *encrypt = zfs_prop_to_name(ZFS_PROP_ENCRYPTION);
+        zfs_prop_t prop = zfs_name_to_prop(propname);
+
+        next_pair = nvlist_next_nvpair(cmdprops, pair);
+        if (prop == ZFS_PROP_CHECKSUM &&
+            (nvlist_exists(origprops, encrypt) ||
+             nvlist_exists(props, encrypt))) {
+            (void) nvlist_add_int32(errors, propname, ERANGE);
+            (void) nvlist_remove_nvpair(cmdprops, pair);
+        }
+
+        pair = next_pair;
+    }
+}
+
+
 #ifdef	DEBUG
 static boolean_t zfs_ioc_recv_inject_err;
 #endif
+
+
 
 /*
  * inputs:
@@ -3613,9 +4190,11 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 	nvlist_t *props = NULL; /* sent properties */
 	nvlist_t *origprops = NULL; /* existing properties */
 	objset_t *origin = NULL;
+    nvlist_t *cmdprops = NULL; /* props specified by 'zfs recv' */
 	char *tosnap;
 	char tofs[ZFS_MAXNAMELEN];
 	boolean_t first_recvd_props = B_FALSE;
+    dsl_crypto_ctx_t dcc = { 0 };
 
 	if (dataset_namecheck(zc->zc_value, NULL, NULL) != 0 ||
 	    strchr(zc->zc_value, '@') == NULL ||
@@ -3637,6 +4216,14 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 		nvlist_free(props);
 		return (EBADF);
 	}
+
+    if (zc->zc_nvlist_conf != NULL &&
+        (error = get_nvlist(zc->zc_nvlist_conf, zc->zc_nvlist_conf_size,
+                            zc->zc_iflags, &cmdprops)) != 0)
+        goto out;
+
+    if ((error = zfs_get_crypto_ctx(zc, &dcc)) != 0)
+        return (error);
 
 	VERIFY(nvlist_alloc(&errors, NV_UNIQUE_NAME, KM_SLEEP) == 0);
 
@@ -3672,6 +4259,84 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 		dmu_objset_rele(os, FTAG);
 	}
 
+    props_handle_encryption(props, origprops, cmdprops, errors);
+
+    // FIXME
+#if 0
+    if (!nvlist_empty(cmdprops)) {
+        /*
+         * Try to avoid calling dmu_recv_begin() if any of the specified
+         * properties are invalid, since otherwise we are committed to
+         * calling dmu_recv_stream(). We can't validate permissions on a
+         * dataset newly created by this receive, since the dataset
+         * won't exist until after dmu_recv_begin(), so we check
+         * permissions on the containing filesystem instead. We repeat
+         * this validation when we actually set the properties.
+         */
+        nvpair_t *pair = NULL;
+        while ((pair = nvlist_next_nvpair(cmdprops, pair)) != NULL) {
+            zprop_source_t source;
+
+            /*
+             * Properties without a value (DATA_TYPE_BOOLEAN) are
+             * those specified by 'zfs receive -x' and are converted
+             * to flags in the received property nvlist by
+             * props_override(), so we don't really need to validate
+             * them here. (They will be removed from cmdprops before
+             * we set anything.) Those that do not have a
+             * corresponding pair in the received property nvlist
+             * are simply dropped, so we want to validate the
+             * specified names before that happens (simply for the
+             * sake of helpful feedback; dsl_props_set() will not
+             * see any value-less pairs from zfs_ioc_recv()).
+             * ZPROP_SRC_NONE happens to be a valid source for a
+             * property without a value.
+             */
+            source = ((nvpair_type(pair) == DATA_TYPE_BOOLEAN) ?
+                      ZPROP_SRC_NONE : ZPROP_SRC_LOCAL);
+
+            if ((error = zfs_prop_validate(pair, source)) != 0)
+                goto out;
+
+            /* validate permissions */
+            if ((error = zfs_check_settable(zc->zc_name, pair,
+                                            CRED())) != 0)
+                goto out;
+        }
+    }
+#endif
+
+    /*
+     * Do this only after validating cmdprops so we don't neglect to
+     * validate properties specified with -x, which props_override() removes
+     * from cmdprops (converting them into flags in the props nvlist).
+     */
+    // FIXME
+#if 0
+    if ((error = props_override(props, origprops, cmdprops, version,
+                                setflags)) != 0)
+        goto out;
+
+    /*
+     * Remove readonly properties from origprops so we don't try to clear
+     * them, but wait until after props_handle_encryption() since that
+     * function uses origprops to check for the encryption property.
+     */
+    if (origprops != NULL) {
+        nvlist_t *errlist = NULL;
+
+        props_filter(origprops, prop_readonly_test);
+        /*
+         * Wait until after props_override() and props_filter() so we
+         * don't check any properties that we aren't going to clear.
+         */
+        if (zfs_check_clearable(tofs, origprops,
+                                &errlist) != 0)
+            (void) nvlist_merge(errors, errlist, 0);
+        nvlist_free(errlist);
+    }
+#endif
+
 	if (zc->zc_string[0]) {
 		error = dmu_objset_hold(zc->zc_string, FTAG, &origin);
 		if (error)
@@ -3679,7 +4344,7 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 	}
 
 	error = dmu_recv_begin(tofs, tosnap, zc->zc_top_ds,
-	    &zc->zc_begin_record, force, origin, &drc);
+                           &zc->zc_begin_record, force, origin, &drc, &dcc);
 	if (origin)
 		dmu_objset_rele(origin, FTAG);
 	if (error)
@@ -3710,11 +4375,30 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 			zc->zc_obj |= ZPROP_ERR_NOCLEAR;
 		}
 
+#if 0
+        /*
+         * Set local properties specified on the command line with -o
+         * and -x before setting received properties, but after setting
+         * $hasrecvd so that explicit inheritance in descendant datasets
+         * works correctly.
+         */
+        if (!nvlist_empty(cmdprops)) {
+            (void) zfs_set_prop_nvlist(tofs, ZPROP_SRC_LOCAL,
+                                       cmdprops, NULL, setflags);
+        }
+#endif
+
 		(void) zfs_set_prop_nvlist(tofs, ZPROP_SRC_RECEIVED,
 		    props, &errlist);
 		(void) nvlist_merge(errors, errlist, 0);
 		nvlist_free(errlist);
 	}
+#if 0
+  else if (!nvlist_empty(cmdprops)) {
+        (void) zfs_set_prop_nvlist(tofs, ZPROP_SRC_LOCAL,
+                    cmdprops, NULL, setflags);
+    }
+#endif
 
 	if (fit_error_list(zc, &errors) != 0 || put_nvlist(zc, errors) != 0) {
 		/*
@@ -3806,6 +4490,7 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 out:
 	nvlist_free(props);
 	nvlist_free(origprops);
+    nvlist_free(cmdprops);
 	nvlist_free(errors);
 	releasef(fd);
 
@@ -4258,6 +4943,157 @@ zfs_ioc_share(zfs_cmd_t *zc)
 ace_t full_access[] = {
 	{(uid_t)-1, ACE_ALL_PERMS, ACE_EVERYONE, 0}
 };
+
+static int
+zfs_ioc_crypto_key_load(zfs_cmd_t *zc)
+{
+    spa_t *spa;
+    zcrypt_key_t *wrappingkey = NULL;
+    int error;
+
+    if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
+        return (error);
+
+    if (spa_version(spa) < SPA_VERSION_CRYPTO) {
+        spa_close(spa, FTAG);
+        return (ENOTSUP);
+    }
+    error = zcrypt_key_from_ioc(&zc->zc_crypto, &wrappingkey);
+    if (error != 0) {
+        spa_close(spa, FTAG);
+        return (error);
+    }
+    error = dsl_crypto_key_load(zc->zc_name, wrappingkey);
+    if (error == EEXIST)
+        zcrypt_key_free(wrappingkey);
+    spa_close(spa, FTAG);
+    return (error);
+}
+
+static int
+zfs_ioc_crypto_key_inherit(zfs_cmd_t *zc)
+{
+    spa_t *spa;
+    int error;
+
+    if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
+        return (error);
+
+    if (spa_version(spa) < SPA_VERSION_CRYPTO) {
+        spa_close(spa, FTAG);
+        return (ENOTSUP);
+    }
+
+    error = dsl_crypto_key_inherit(zc->zc_name);
+    spa_close(spa, FTAG);
+    return (error);
+}
+
+static int
+zfs_ioc_crypto_key_unload(zfs_cmd_t *zc)
+{
+    spa_t *spa;
+    int error;
+
+    if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
+        return (error);
+
+    if (spa_version(spa) < SPA_VERSION_CRYPTO) {
+        spa_close(spa, FTAG);
+        return (ENOTSUP);
+    }
+
+    error = dsl_crypto_key_unload(zc->zc_name);
+    spa_close(spa, FTAG);
+    return (error);
+}
+
+static int
+zfs_ioc_crypto_key_new(zfs_cmd_t *zc)
+{
+    spa_t *spa;
+    int error;
+
+    if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
+        return (error);
+
+    if (spa_version(spa) < SPA_VERSION_CRYPTO) {
+        spa_close(spa, FTAG);
+        return (ENOTSUP);
+    }
+
+    error = dsl_crypto_key_new(zc->zc_name);
+    spa_close(spa, FTAG);
+    return (error);
+}
+
+static int
+zfs_ioc_crypto_key_change(zfs_cmd_t *zc)
+{
+    spa_t *spa;
+    zcrypt_key_t *wrappingkey = NULL;
+    nvlist_t *props = NULL;
+    nvpair_t *pair = NULL;
+    int error;
+
+    if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
+        return (error);
+
+    if (spa_version(spa) < SPA_VERSION_CRYPTO) {
+        spa_close(spa, FTAG);
+        return (ENOTSUP);
+    }
+
+    if (zc->zc_nvlist_src_size != 0 && (error =
+                                        get_nvlist(zc->zc_nvlist_src, zc->zc_nvlist_src_size,
+                                                   zc->zc_iflags, &props))) {
+        spa_close(spa, FTAG);
+        return (error);
+    }
+
+    /*
+     * First check that we are allowed to set the props if
+     * there are any.  Don't use zfs_set_prop_nvlist() because
+     * we must have the properties set in the same txg.
+     * We have to do this here rather than in
+     * zfs_secpolicy_crypto_keychange() because the nvlist needs
+     * copied in and unpacked, if we do it twice there is a risk
+     * of a TOCTTOU vulnerability.
+     *
+     * The salt property is hidden/internal and only gets updated when
+     * we do a ZFS_IOC_CRYPTO_CHANGE_KEY which uses the "keychange"
+     * delegation so no additional check is done for salt. Being
+     * marked as a readonly property it isn't delgatable anyway.
+     *
+     * SALT is a property so it can be read from userland easily,
+     * when being set it comes down over the ioctl interface via
+     * zc_crypto.zic_salt here we turn it into a property so that
+     * it is set atomically in dsl_crypto_key_change() with any other
+     * props and the actual key change.  Note this is slighly different
+     * to what happens on a dataset create where the salt goes in
+     * via the dsl_crypto_ctx_t.
+     */
+    if (props != NULL) {
+        while ((pair = nvlist_next_nvpair(props, pair)) != NULL) {
+            error = zfs_check_settable(zc->zc_name, pair, CRED());
+                        if (error != 0)
+                            goto out;
+        }
+    } else if (props == NULL) {
+        VERIFY(nvlist_alloc(&props, NV_UNIQUE_NAME, KM_SLEEP) == 0);
+    }
+
+    VERIFY3U(nvlist_add_uint64(props, zfs_prop_to_name(ZFS_PROP_SALT),
+                               zc->zc_crypto.zic_salt), ==, 0);
+
+    error = zcrypt_key_from_ioc(&zc->zc_crypto, &wrappingkey);
+    if (error == 0)
+        error = dsl_crypto_key_change(zc->zc_name, wrappingkey, props);
+ out:
+    spa_close(spa, FTAG);
+    nvlist_free(props);
+    return (error);
+}
 
 /*
  * inputs:
@@ -4893,6 +5729,16 @@ static zfs_ioc_vec_t zfs_ioc_vec[] = {
 	    B_FALSE, POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
 	{ zfs_ioc_obj_to_stats, zfs_secpolicy_diff, DATASET_NAME, B_FALSE,
 	    POOL_CHECK_SUSPENDED },
+    { zfs_ioc_crypto_key_load, zfs_secpolicy_crypto_keyuse,
+      DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED },
+    { zfs_ioc_crypto_key_unload, zfs_secpolicy_crypto_keyuse,
+      DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED },
+    { zfs_ioc_crypto_key_inherit, zfs_secpolicy_crypto_keyuse,
+      DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED },
+    { zfs_ioc_crypto_key_change, zfs_secpolicy_crypto_keychange,
+      DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
+    { zfs_ioc_crypto_key_new, zfs_secpolicy_crypto_keychange,
+      DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
 	{ zfs_ioc_events_next, zfs_secpolicy_config, NO_NAME, B_FALSE,
 	    POOL_CHECK_NONE },
 	{ zfs_ioc_events_clear, zfs_secpolicy_config, NO_NAME, B_FALSE,

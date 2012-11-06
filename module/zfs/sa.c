@@ -1019,6 +1019,9 @@ sa_setup(objset_t *os, uint64_t sa_obj, sa_attr_reg_t *reg_attrs, int count,
 	avl_create(&sa->sa_layout_hash_tree, layout_hash_compare,
 	    sizeof (sa_lot_t), offsetof(sa_lot_t, lot_hash_node));
 
+    if (os->os_crypt != ZIO_CRYPT_OFF)
+		sa->sa_force_spill = B_TRUE;
+
 	if (sa_obj) {
 		error = zap_lookup(os, sa_obj, SA_LAYOUTS,
 		    8, 1, &sa->sa_layout_attr_obj);

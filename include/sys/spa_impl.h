@@ -38,6 +38,7 @@
 #include <sys/refcount.h>
 #include <sys/bplist.h>
 #include <sys/bpobj.h>
+#include <sys/zcrypt.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -221,6 +222,7 @@ struct spa {
 	int		spa_vdev_locks;		/* locks grabbed */
 	uint64_t	spa_creation_version;	/* version at pool creation */
 	uint64_t	spa_prev_software_version;
+    zcrypt_keystore_t *spa_keystore;        /* Crypto keystore */
 	/*
 	 * spa_refcnt & spa_config_lock must be the last elements
 	 * because refcount_t changes size based on compilation options.

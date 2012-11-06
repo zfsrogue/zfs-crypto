@@ -12,6 +12,8 @@ libzpool_la_SOURCES = \
 	$(top_srcdir)/lib/libzpool/kernel.c \
 	$(top_srcdir)/lib/libzpool/taskq.c \
 	$(top_srcdir)/lib/libzpool/util.c \
+	$(top_srcdir)/include/sys/crypto/fakeit.c \
+	$(top_srcdir)/module/zcommon/zcrypt_common.c \
 	$(top_srcdir)/module/zcommon/zfs_comutil.c \
 	$(top_srcdir)/module/zcommon/zfs_deleg.c \
 	$(top_srcdir)/module/zcommon/zfs_fletcher.c \
@@ -36,6 +38,7 @@ libzpool_la_SOURCES = \
 	$(top_srcdir)/module/zfs/dmu_zfetch.c \
 	$(top_srcdir)/module/zfs/dnode.c \
 	$(top_srcdir)/module/zfs/dnode_sync.c \
+	$(top_srcdir)/module/zfs/dsl_crypto.c \
 	$(top_srcdir)/module/zfs/dsl_dataset.c \
 	$(top_srcdir)/module/zfs/dsl_deadlist.c \
 	$(top_srcdir)/module/zfs/dsl_deleg.c \
@@ -74,6 +77,7 @@ libzpool_la_SOURCES = \
 	$(top_srcdir)/module/zfs/zap.c \
 	$(top_srcdir)/module/zfs/zap_leaf.c \
 	$(top_srcdir)/module/zfs/zap_micro.c \
+	$(top_srcdir)/module/zfs/zcrypt.c \
 	$(top_srcdir)/module/zfs/zfs_byteswap.c \
 	$(top_srcdir)/module/zfs/zfs_debug.c \
 	$(top_srcdir)/module/zfs/zfs_fm.c \
@@ -83,6 +87,7 @@ libzpool_la_SOURCES = \
 	$(top_srcdir)/module/zfs/zil.c \
 	$(top_srcdir)/module/zfs/zio.c \
 	$(top_srcdir)/module/zfs/zio_checksum.c \
+	$(top_srcdir)/module/zfs/zio_crypt.c \
 	$(top_srcdir)/module/zfs/zio_compress.c \
 	$(top_srcdir)/module/zfs/zio_inject.c \
 	$(top_srcdir)/module/zfs/zle.c \

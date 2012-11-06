@@ -100,6 +100,7 @@ struct zilog {
 	uint64_t	zl_replayed_seq[TXG_SIZE]; /* last replayed rec seq */
 	uint64_t	zl_replaying_seq; /* current replay seq number */
 	uint32_t	zl_suspend;	/* log suspend count */
+    uint32_t        zl_no_dmu_sync; /* can't dmu sync just now */
 	kcondvar_t	zl_cv_writer;	/* log writer thread completion */
 	kcondvar_t	zl_cv_suspend;	/* log suspend completion */
 	uint8_t		zl_suspending;	/* log is currently suspending */

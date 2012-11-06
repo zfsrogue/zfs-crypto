@@ -56,6 +56,8 @@ extern "C" {
 #define	ZFS_DELEG_PERM_HOLD		"hold"
 #define	ZFS_DELEG_PERM_RELEASE		"release"
 #define	ZFS_DELEG_PERM_DIFF		"diff"
+#define ZFS_DELEG_PERM_KEY              "key"
+#define ZFS_DELEG_PERM_KEYCHANGE        "keychange"
 
 /*
  * Note: the names of properties that are marked delegatable are also

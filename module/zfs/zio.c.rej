@@ -1,0 +1,10 @@
+diff a/module/zfs/zio.c b/module/zfs/zio.c	(rejected hunks)
+@@ -2452,7 +2647,7 @@ zio_vdev_io_start(zio_t *zio)
+ 			bcopy(zio->io_data, abuf, zio->io_size);
+ 			bzero(abuf + zio->io_size, asize - zio->io_size);
+ 		}
+-		zio_push_transform(zio, abuf, asize, asize, zio_subblock);
++		zio_push_transform(zio, abuf, asize, asize, zio_subblock, NULL);
+ 		ASSERT(P2PHASE(zio->io_size, align) == 0);
+ 	}
+ 

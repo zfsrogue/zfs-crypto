@@ -125,6 +125,11 @@ typedef enum {
 	ZFS_PROP_DEDUP,
 	ZFS_PROP_MLSLABEL,
 	ZFS_PROP_SYNC,
+    ZFS_PROP_ENCRYPTION,
+    ZFS_PROP_KEYSOURCE,
+    ZFS_PROP_KEYSTATUS,
+    ZFS_PROP_SALT,                  /* not exposed to the user */
+    ZFS_PROP_REKEYDATE,
 	ZFS_PROP_REFRATIO,
 	ZFS_PROP_WRITTEN,
 	ZFS_PROP_CLONES,
@@ -356,6 +361,9 @@ typedef enum {
 #define	SPA_VERSION_26			26ULL
 #define	SPA_VERSION_27			27ULL
 #define	SPA_VERSION_28			28ULL
+#define SPA_VERSION_29          29ULL
+#define SPA_VERSION_30          30ULL
+
 
 /*
  * When bumping up SPA_VERSION, make sure GRUB ZFS understands the on-disk
@@ -363,8 +371,8 @@ typedef enum {
  * and do the appropriate changes.  Also bump the version number in
  * usr/src/grub/capability.
  */
-#define	SPA_VERSION			SPA_VERSION_28
-#define	SPA_VERSION_STRING		"28"
+#define	SPA_VERSION			SPA_VERSION_30
+#define	SPA_VERSION_STRING		"30"
 
 /*
  * Symbolic names for the changes that caused a SPA_VERSION switch.
@@ -415,6 +423,11 @@ typedef enum {
 #define	SPA_VERSION_DEADLISTS		SPA_VERSION_26
 #define	SPA_VERSION_FAST_SNAP		SPA_VERSION_27
 #define	SPA_VERSION_MULTI_REPLACE	SPA_VERSION_28
+#define SPA_VERSION_RAIDZ_MIRROR        SPA_VERSION_29
+#define SPA_VERSION_CRYPTO              SPA_VERSION_30
+    //#define SPA_VERSION_OPTIONAL_CHILD_DIR  SPA_VERSION_31
+    //#define SPA_VERSION_ONE_MEG_BLKSZ       SPA_VERSION_32
+    //#define SPA_VERSION_SHARE2              SPA_VERSION_33
 
 /*
  * ZPL version - rev'd whenever an incompatible on-disk format change
@@ -798,6 +811,11 @@ typedef enum zfs_ioc {
 	ZFS_IOC_DIFF,
 	ZFS_IOC_TMP_SNAPSHOT,
 	ZFS_IOC_OBJ_TO_STATS,
+    ZFS_IOC_CRYPTO_KEY_LOAD,
+    ZFS_IOC_CRYPTO_KEY_UNLOAD,
+    ZFS_IOC_CRYPTO_KEY_INHERIT,
+    ZFS_IOC_CRYPTO_KEY_CHANGE,
+    ZFS_IOC_CRYPTO_KEY_NEW,
 	ZFS_IOC_EVENTS_NEXT,
 	ZFS_IOC_EVENTS_CLEAR,
 	ZFS_IOC_POOL_REGUID,
@@ -938,6 +956,8 @@ typedef enum history_internal_events {
 	LOG_DS_USER_HOLD,
 	LOG_DS_USER_RELEASE,
 	LOG_POOL_SPLIT,
+    LOG_DS_CRYPTO_KEY_CREATE,
+    LOG_DS_CRYPTO_KEY_CHANGE,
 	LOG_END
 } history_internal_events_t;
 

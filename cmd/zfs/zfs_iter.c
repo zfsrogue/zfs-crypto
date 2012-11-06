@@ -50,6 +50,13 @@
 typedef struct zfs_node {
 	zfs_handle_t	*zn_handle;
 	uu_avl_node_t	zn_avlnode;
+    /*
+     * Depth is zero for all specified (top level) datasets and N for
+     * descendant datasets (visited when the ZFS_ITER_RECURSE flag is set),
+     * where N is the number of parent datasets traversed to reach the top
+     * level dataset.
+     */
+    int             zn_depth;
 } zfs_node_t;
 
 typedef struct callback_data {
@@ -364,7 +371,7 @@ zfs_sort(const void *larg, const void *rarg, void *data)
 int
 zfs_for_each(int argc, char **argv, int flags, zfs_type_t types,
     zfs_sort_column_t *sortcol, zprop_list_t **proplist, int limit,
-    zfs_iter_f callback, void *data)
+    zfs_iter_cb callback, void *data)
 {
 	callback_data_t cb = {0};
 	int ret = 0;
@@ -466,7 +473,7 @@ zfs_for_each(int argc, char **argv, int flags, zfs_type_t types,
 	 */
 	for (node = uu_avl_first(cb.cb_avl); node != NULL;
 	    node = uu_avl_next(cb.cb_avl, node))
-		ret |= callback(node->zn_handle, data);
+		ret |= callback(node->zn_handle, node->zn_depth, data);
 
 	/*
 	 * Finally, clean up the AVL tree.

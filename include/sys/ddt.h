@@ -63,7 +63,7 @@ enum ddt_class {
  */
 typedef struct ddt_key {
 	zio_cksum_t	ddk_cksum;	/* 256-bit block checksum */
-	uint64_t	ddk_prop;	/* LSIZE, PSIZE, compression */
+	uint64_t	ddk_prop;	/* LSIZE, PSIZE, compression, encrypt */
 } ddt_key_t;
 
 /*
@@ -85,6 +85,9 @@ typedef struct ddt_key {
 
 #define	DDK_GET_COMPRESS(ddk)		BF64_GET((ddk)->ddk_prop, 32, 8)
 #define	DDK_SET_COMPRESS(ddk, x)	BF64_SET((ddk)->ddk_prop, 32, 8, x)
+
+#define DDK_GET_CRYPT(ddk)              BF64_GET((ddk)->ddk_prop, 40, 1)
+#define DDK_SET_CRYPT(ddk, x)           BF64_SET((ddk)->ddk_prop, 40, 1, x)
 
 #define	DDT_KEY_WORDS	(sizeof (ddt_key_t) / sizeof (uint64_t))
 

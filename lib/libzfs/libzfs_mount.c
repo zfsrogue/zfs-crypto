@@ -555,6 +555,29 @@ zfs_unmount(zfs_handle_t *zhp, const char *mountpoint, int flags)
 }
 
 /*
+ * mount this filesystem and any children inheriting the mountpoint property.
+ * To do this, just act like we're changing the mountpoint property, but don't
+ * unmount the filesystems first.
+ */
+int
+zfs_mountall(zfs_handle_t *zhp, int mflags)
+{
+    prop_changelist_t *clp;
+    int ret;
+
+    clp = changelist_gather(zhp, ZFS_PROP_MOUNTPOINT,
+                            CL_GATHER_MOUNT_ALWAYS, mflags);
+    if (clp == NULL)
+        return (-1);
+
+    ret = changelist_postfix(clp);
+    changelist_free(clp);
+
+    return (ret);
+}
+
+
+/*
  * Unmount this filesystem and any children inheriting the mountpoint property.
  * To do this, just act like we're changing the mountpoint property, but don't
  * remount the filesystems afterwards.

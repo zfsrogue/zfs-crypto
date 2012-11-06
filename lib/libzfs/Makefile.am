@@ -9,6 +9,7 @@ lib_LTLIBRARIES = libzfs.la
 libzfs_la_SOURCES = \
 	$(top_srcdir)/lib/libzfs/libzfs_changelist.c \
 	$(top_srcdir)/lib/libzfs/libzfs_config.c \
+	$(top_srcdir)/lib/libzfs/libzfs_crypto.c \
 	$(top_srcdir)/lib/libzfs/libzfs_dataset.c \
 	$(top_srcdir)/lib/libzfs/libzfs_diff.c \
 	$(top_srcdir)/lib/libzfs/libzfs_fru.c \

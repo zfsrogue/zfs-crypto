@@ -51,6 +51,8 @@ typedef struct dsl_prop_cb_record {
 typedef struct dsl_props_arg {
 	nvlist_t *pa_props;
 	zprop_source_t pa_source;
+    //zprop_setflags_t pa_flags;
+    //zone_t *pa_zone; //FIXME
 } dsl_props_arg_t;
 
 typedef struct dsl_prop_set_arg {
@@ -59,7 +61,8 @@ typedef struct dsl_prop_set_arg {
 	int psa_intsz;
 	int psa_numints;
 	const void *psa_value;
-
+    //zprop_setflags_t psa_flags;
+    //zone_t *psa_zone; // FIXME
 	/*
 	 * Used to handle the special requirements of the quota and reservation
 	 * properties.

@@ -57,6 +57,15 @@ typedef struct libzfs_fru {
 	struct libzfs_fru *zf_next;
 } libzfs_fru_t;
 
+typedef struct zfs_crypt {
+    /* Creating, loading, or changed key value */
+    char            *zc_key_data;
+    size_t          zc_key_data_len;
+    boolean_t       zc_clone_newkey;
+    /* Private */
+    boolean_t       zc_is_key_change;
+} zfs_crypt_t;
+
 struct libzfs_handle {
 	int libzfs_error;
 	int libzfs_fd;
@@ -83,6 +92,7 @@ struct libzfs_handle {
 	libzfs_fru_t *libzfs_fru_list;
 #endif /* HAVE_LIBTOPO */
 	char libzfs_chassis_id[256];
+    zfs_crypt_t libzfs_crypt;
 };
 
 #define	ZFSSHARE_MISS	0x01	/* Didn't find entry in cache */

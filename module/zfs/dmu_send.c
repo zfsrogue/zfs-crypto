@@ -34,6 +34,7 @@
 #include <sys/zfs_context.h>
 #include <sys/dmu_objset.h>
 #include <sys/dmu_traverse.h>
+#include <sys/dsl_crypto.h>
 #include <sys/dsl_dataset.h>
 #include <sys/dsl_dir.h>
 #include <sys/dsl_prop.h>
@@ -171,6 +172,7 @@ dump_data(dmu_sendarg_t *dsp, dmu_object_type_t type,
 	DDK_SET_LSIZE(&drrw->drr_key, BP_GET_LSIZE(bp));
 	DDK_SET_PSIZE(&drrw->drr_key, BP_GET_PSIZE(bp));
 	DDK_SET_COMPRESS(&drrw->drr_key, BP_GET_COMPRESS(bp));
+    DDK_SET_CRYPT(&drrw->drr_key, BP_GET_CRYPT(bp));
 	drrw->drr_key.ddk_cksum = bp->blk_cksum;
 
 	if (dump_bytes(dsp, dsp->dsa_drr, sizeof (dmu_replay_record_t)) != 0)
@@ -398,6 +400,7 @@ dmu_send(objset_t *tosnap, objset_t *fromsnap, boolean_t fromorigin,
 	dmu_sendarg_t *dsp;
 	int err;
 	uint64_t fromtxg = 0;
+    uint64_t featureflags = 0;
 
 	/* tosnap must be a snapshot */
 	if (ds->ds_phys->ds_next_snap_obj == 0)
@@ -435,7 +438,7 @@ dmu_send(objset_t *tosnap, objset_t *fromsnap, boolean_t fromorigin,
 
 #ifdef _KERNEL
 	if (dmu_objset_type(tosnap) == DMU_OST_ZFS) {
-		uint64_t version;
+		uint64_t version, crypt;
 		if (zfs_get_zplprop(tosnap, ZFS_PROP_VERSION, &version) != 0) {
 			kmem_free(drr, sizeof (dmu_replay_record_t));
 			return (EINVAL);
@@ -445,9 +448,23 @@ dmu_send(objset_t *tosnap, objset_t *fromsnap, boolean_t fromorigin,
 			    drr->drr_u.drr_begin.drr_versioninfo,
 			    DMU_BACKUP_FEATURE_SA_SPILL);
 		}
+        rw_enter(&ds->ds_dir->dd_pool->dp_config_rwlock, RW_READER);
+        if (dsl_prop_get_ds(ds,
+                            zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &crypt, NULL
+                            /*,DSL_PROP_GET_EFFECTIVE*/) != 0) {
+            rw_exit(&ds->ds_dir->dd_pool->dp_config_rwlock);
+            return (EINVAL);
+        }
+        rw_exit(&ds->ds_dir->dd_pool->dp_config_rwlock);
+        if (crypt != ZIO_CRYPT_OFF) {
+            featureflags |= DMU_BACKUP_FEATURE_ENCRYPT;
+        }
+
 	}
 #endif
 
+    DMU_SET_FEATUREFLAGS(drr->drr_u.drr_begin.drr_versioninfo,
+                         featureflags);
 	drr->drr_u.drr_begin.drr_creation_time =
 	    ds->ds_phys->ds_creation_time;
 	drr->drr_u.drr_begin.drr_type = tosnap->os_phys->os_type;
@@ -612,6 +629,7 @@ struct recvbeginsyncarg {
 	char clonelastname[MAXNAMELEN];
 	dsl_dataset_t *ds; /* the ds to recv into; returned from the syncfunc */
 	cred_t *cr;
+    dsl_crypto_ctx_t *dcc;
 };
 
 /* ARGSUSED */
@@ -653,13 +671,13 @@ recv_new_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 
 	/* Create and open new dataset. */
 	dsobj = dsl_dataset_create_sync(dd, strrchr(rbsa->tofs, '/') + 1,
-	    rbsa->origin, flags, rbsa->cr, tx);
+                                    rbsa->origin, rbsa->dcc, flags, rbsa->cr, tx);
 	VERIFY(0 == dsl_dataset_own_obj(dd->dd_pool, dsobj,
 	    B_TRUE, dmu_recv_tag, &rbsa->ds));
 
 	if (rbsa->origin == NULL) {
 		(void) dmu_objset_create_impl(dd->dd_pool->dp_spa,
-		    rbsa->ds, &rbsa->ds->ds_phys->ds_bp, rbsa->type, tx);
+		    rbsa->ds, &rbsa->ds->ds_phys->ds_bp, rbsa->type, rbsa->dcc, tx);
 	}
 
 	spa_history_log_internal(LOG_DS_REPLAY_FULL_SYNC,
@@ -750,7 +768,8 @@ recv_existing_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 
 	/* create and open the temporary clone */
 	dsobj = dsl_dataset_create_sync(ohds->ds_dir, rbsa->clonelastname,
-	    ohds->ds_prev, flags, rbsa->cr, tx);
+                                    ohds->ds_prev, rbsa->dcc, flags, rbsa->cr,
+                                    tx);
 	VERIFY(0 == dsl_dataset_own_obj(dp, dsobj, B_TRUE, dmu_recv_tag, &cds));
 
 	/*
@@ -759,7 +778,7 @@ recv_existing_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 	 */
 	if (BP_IS_HOLE(dsl_dataset_get_blkptr(cds))) {
 		(void) dmu_objset_create_impl(dp->dp_spa,
-		    cds, dsl_dataset_get_blkptr(cds), rbsa->type, tx);
+		    cds, dsl_dataset_get_blkptr(cds), rbsa->type,  rbsa->dcc, tx);
 	}
 
 	rbsa->ds = cds;
@@ -772,12 +791,48 @@ static boolean_t
 dmu_recv_verify_features(dsl_dataset_t *ds, struct drr_begin *drrb)
 {
 	int featureflags;
+    uint64_t crypt;
 
 	featureflags = DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo);
 
+#if 0
 	/* Verify pool version supports SA if SA_SPILL feature set */
 	return ((featureflags & DMU_BACKUP_FEATURE_SA_SPILL) &&
 	    (spa_version(dsl_dataset_get_spa(ds)) < SPA_VERSION_SA));
+#endif
+
+        /*
+         * Currently all these checks only apply to DMU_OST_ZFS
+         * because they are all to do with the SA spill blocks
+         * and also how that is used by encrypted filesystems.
+         * If ZVOLs ever start using SA spill blocks for anything the
+         * first check at least might need to apply to them too.
+         */
+        if (drrb->drr_type != DMU_OST_ZFS) {
+                return (B_TRUE);
+        }
+        /* Verify pool version supports SA if SA_SPILL feature set */
+        if ((featureflags & DMU_BACKUP_FEATURE_SA_SPILL) &&
+            spa_version(dsl_dataset_get_spa(ds)) < SPA_VERSION_SA) {
+                return (B_FALSE);
+        }
+
+        /*
+         * Verify stream came from an encrypted dataset if encryption is on.
+         */
+        rw_enter(&ds->ds_dir->dd_pool->dp_config_rwlock, RW_READER);
+        VERIFY(0 == dsl_prop_get_ds(ds, zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
+                                    8, 1, &crypt, NULL
+                                    /*, DSL_PROP_GET_EFFECTIVE*/)); //FIXME
+        rw_exit(&ds->ds_dir->dd_pool->dp_config_rwlock);
+        if ((featureflags & DMU_BACKUP_FEATURE_ENCRYPT) &&
+            spa_version(dsl_dataset_get_spa(ds)) < SPA_VERSION_CRYPTO) {
+                return (B_FALSE);
+        } else if (crypt != ZIO_CRYPT_OFF) {
+                return (featureflags & DMU_BACKUP_FEATURE_ENCRYPT);
+        }
+
+        return (B_TRUE);
 }
 
 /*
@@ -786,7 +841,8 @@ dmu_recv_verify_features(dsl_dataset_t *ds, struct drr_begin *drrb)
  */
 int
 dmu_recv_begin(char *tofs, char *tosnap, char *top_ds, struct drr_begin *drrb,
-    boolean_t force, objset_t *origin, dmu_recv_cookie_t *drc)
+               boolean_t force, objset_t *origin, dmu_recv_cookie_t *drc,
+               struct dsl_crypto_ctx *dcc)
 {
 	int err = 0;
 	boolean_t byteswap;
@@ -810,6 +866,7 @@ dmu_recv_begin(char *tofs, char *tosnap, char *top_ds, struct drr_begin *drrb,
 	rbsa.tag = FTAG;
 	rbsa.dsflags = 0;
 	rbsa.cr = CRED();
+    rbsa.dcc = dcc;
 	versioninfo = drrb->drr_versioninfo;
 	flags = drrb->drr_flags;
 
@@ -863,6 +920,7 @@ dmu_recv_begin(char *tofs, char *tosnap, char *top_ds, struct drr_begin *drrb,
 		(void) snprintf(rbsa.clonelastname, sizeof (rbsa.clonelastname),
 		    "%%%s", tosnap);
 		rbsa.force = force;
+        rbsa.dcc->dcc_origin_ds = ds;
 		err = dsl_sync_task_do(ds->ds_dir->dd_pool,
 		    recv_existing_check, recv_existing_sync, ds, &rbsa, 5);
 		if (err) {
@@ -1081,6 +1139,7 @@ restore_object(struct restorearg *ra, objset_t *os, struct drr_object *drro)
 	    drro->drr_bonustype >= DMU_OT_NUMTYPES ||
 	    drro->drr_checksumtype >= ZIO_CHECKSUM_FUNCTIONS ||
 	    drro->drr_compress >= ZIO_COMPRESS_FUNCTIONS ||
+        drro->drr_crypt >= ZIO_CRYPT_FUNCTIONS ||
 	    P2PHASE(drro->drr_blksz, SPA_MINBLOCKSIZE) ||
 	    drro->drr_blksz < SPA_MINBLOCKSIZE ||
 	    drro->drr_blksz > SPA_MAXBLOCKSIZE ||

@@ -202,6 +202,9 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 	arc_buf_t *abuf = NULL;
 	zbookmark_t zb;
 	int error;
+    char *data;
+    uint64_t size;
+    boolean_t raw;
 
 	if (zilog->zl_header->zh_claim_txg == 0)
 		zio_flags |= ZIO_FLAG_SPECULATIVE | ZIO_FLAG_SCRUB;
@@ -212,8 +215,27 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 	SET_BOOKMARK(&zb, bp->blk_cksum.zc_word[ZIL_ZC_OBJSET],
 	    ZB_ZIL_OBJECT, ZB_ZIL_LEVEL, bp->blk_cksum.zc_word[ZIL_ZC_SEQ]);
 
-	error = dsl_read_nolock(NULL, zilog->zl_spa, bp, arc_getbuf_func, &abuf,
-	    ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
+	/*
+	 * If we haven't started replay then crypto reads are raw and uncached
+	 */
+	raw = BP_IS_ENCRYPTED(bp) && (zilog->zl_header->zh_claim_txg == 0);
+	if (raw) {
+		zio_flags |= ZIO_FLAG_RAW;
+		size = BP_GET_PSIZE(bp);
+		data = zio_data_buf_alloc(size);
+		//error = zio_wait(zio_read(NULL, zilog->zl_spa, bp, data, size,
+        //           NULL, NULL, ZIO_PRIORITY_SYNC_READ, zio_flags, &zb));
+        error = dsl_read_nolock(NULL, zilog->zl_spa, bp, arc_getbuf_func, data,
+                                ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
+
+	} else {
+		error = arc_read(NULL, zilog->zl_spa, bp, 0, arc_getbuf_func,
+                         &abuf, ZIO_PRIORITY_SYNC_READ, zio_flags, NULL, &zb);
+		if (error)
+			return (error);
+		size = BP_GET_LSIZE(bp);
+		data = abuf->b_data;
+	}
 
 	if (error == 0) {
 		zio_cksum_t cksum = bp->blk_cksum;
@@ -229,7 +251,7 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 		cksum.zc_word[ZIL_ZC_SEQ]++;
 
 		if (BP_GET_CHECKSUM(bp) == ZIO_CHECKSUM_ZILOG2) {
-			zil_chain_t *zilc = abuf->b_data;
+			zil_chain_t *zilc = (zil_chain_t *)data;
 			char *lr = (char *)(zilc + 1);
 			uint64_t len = zilc->zc_nused - sizeof (zil_chain_t);
 
@@ -242,8 +264,7 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 				*nbp = zilc->zc_next_blk;
 			}
 		} else {
-			char *lr = abuf->b_data;
-			uint64_t size = BP_GET_LSIZE(bp);
+			char *lr = data;
 			zil_chain_t *zilc = (zil_chain_t *)(lr + size) - 1;
 
 			if (bcmp(&cksum, &zilc->zc_next_blk.blk_cksum,
@@ -257,8 +278,13 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 			}
 		}
 
-		VERIFY(arc_buf_remove_ref(abuf, &abuf) == 1);
+		//VERIFY(arc_buf_remove_ref(abuf, &abuf) == 1);
 	}
+
+	if (raw)
+		zio_data_buf_free(data, size);
+	//else
+		//arc_free_ref(abuf);
 
 	return (error);
 }
@@ -288,13 +314,38 @@ zil_read_log_data(zilog_t *zilog, const lr_write_t *lr, void *wbuf)
 	SET_BOOKMARK(&zb, dmu_objset_id(zilog->zl_os), lr->lr_foid,
 	    ZB_ZIL_LEVEL, lr->lr_offset / BP_GET_LSIZE(bp));
 
-	error = arc_read_nolock(NULL, zilog->zl_spa, bp, arc_getbuf_func, &abuf,
-	    ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
+	/*
+	 * We try to cache in the ARC data blocks to minimise IO.
+	 * However, we can't do this for encrypted blocks before replay
+	 * because we need the key and don't want to put the untranslated
+	 * blocks in the ARC.
+	 */
+	if (BP_IS_ENCRYPTED(bp) && (zilog->zl_header->zh_claim_txg == 0)) {
+		char *data;
+		uint64_t size;
 
-	if (error == 0) {
+		zio_flags |= ZIO_FLAG_RAW;
+		size = BP_GET_PSIZE(bp);
+		data = zio_data_buf_alloc(size);
+        error = dsl_read_nolock(NULL, zilog->zl_spa, bp, arc_getbuf_func, data,
+                                ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
+		//error = zio_wait(zio_read(NULL, zilog->zl_spa, bp, data, size,
+        //   NULL, NULL, ZIO_PRIORITY_SYNC_READ, zio_flags, &zb));
+		ASSERT(wbuf == NULL);
+		zio_data_buf_free(data, size);
+
+	} else {
+		arc_buf_t *abuf = NULL;
+
+		error = arc_read(NULL, zilog->zl_spa, bp, 0, arc_getbuf_func,
+		    &abuf, ZIO_PRIORITY_SYNC_READ, zio_flags, NULL, &zb);
+		if (error)
+			return (error);
 		if (wbuf != NULL)
 			bcopy(abuf->b_data, wbuf, arc_buf_size(abuf));
-		(void) arc_buf_remove_ref(abuf, &abuf);
+
+
+		//arc_free_ref(abuf);
 	}
 
 	return (error);
@@ -520,7 +571,7 @@ zil_create(zilog_t *zilog)
 		}
 
 		error = zio_alloc_zil(zilog->zl_spa, txg, &blk,
-		    ZIL_MIN_BLKSZ, B_TRUE);
+                              ZIL_MIN_BLKSZ, B_TRUE, zilog->zl_os->os_crypt);
 		fastwrite = TRUE;
 
 		if (error == 0)
@@ -855,14 +906,25 @@ static void
 zil_lwb_write_init(zilog_t *zilog, lwb_t *lwb)
 {
 	zbookmark_t zb;
+	zio_prop_t zp = { 0 };
+	zio_t *rzio = zilog->zl_root_zio;
 
 	SET_BOOKMARK(&zb, lwb->lwb_blk.blk_cksum.zc_word[ZIL_ZC_OBJSET],
 	    ZB_ZIL_OBJECT, ZB_ZIL_LEVEL,
 	    lwb->lwb_blk.blk_cksum.zc_word[ZIL_ZC_SEQ]);
 
-	if (zilog->zl_root_zio == NULL) {
-		zilog->zl_root_zio = zio_root(zilog->zl_spa, NULL, NULL,
+	zp.zp_checksum = BP_GET_CHECKSUM(&lwb->lwb_blk);
+	zp.zp_compress = ZIO_COMPRESS_OFF;
+	zp.zp_crypt = zilog->zl_os->os_crypt;
+	zp.zp_type = DMU_OT_INTENT_LOG;
+
+	if (rzio == NULL) {
+		zilog->zl_root_zio = rzio = zio_root(zilog->zl_spa, NULL, NULL,
 		    ZIO_FLAG_CANFAIL);
+		if (zilog->zl_logbias == ZFS_LOGBIAS_LATENCY)
+			rzio->io_priority = ZIO_PRIORITY_LOG_WRITE;
+		else
+			rzio->io_priority = ZIO_PRIORITY_ASYNC_WRITE;
 	}
 
 	/* Lock so zil_sync() doesn't fastwrite_unmark after zio is created */
@@ -874,7 +936,7 @@ zil_lwb_write_init(zilog_t *zilog, lwb_t *lwb)
 		}
 		lwb->lwb_zio = zio_rewrite(zilog->zl_root_zio, zilog->zl_spa,
 		    0, &lwb->lwb_blk, lwb->lwb_buf, BP_GET_LSIZE(&lwb->lwb_blk),
-		    zil_lwb_write_done, lwb, ZIO_PRIORITY_LOG_WRITE,
+            &zp, zil_lwb_write_done, lwb, ZIO_PRIORITY_LOG_WRITE,
 		    ZIO_FLAG_CANFAIL | ZIO_FLAG_DONT_PROPAGATE |
 		    ZIO_FLAG_FASTWRITE, &zb);
 	}
@@ -975,7 +1037,7 @@ zil_lwb_write_start(zilog_t *zilog, lwb_t *lwb)
 
 	BP_ZERO(bp);
 	use_slog = USE_SLOG(zilog);
-	error = zio_alloc_zil(spa, txg, bp, zil_blksz, USE_SLOG(zilog));
+	error = zio_alloc_zil(spa, txg, bp, zil_blksz, USE_SLOG(zilog), zilog->zl_os->os_crypt);
 	if (use_slog)
 	{
 		ZIL_STAT_BUMP(zil_itx_metaslab_slog_count);
@@ -1010,7 +1072,7 @@ zil_lwb_write_start(zilog_t *zilog, lwb_t *lwb)
 		wsz = lwb->lwb_sz;
 	}
 
-	zilc->zc_pad = 0;
+	zilc->zc_mac = 0;
 	zilc->zc_nused = lwb->lwb_nused;
 	zilc->zc_eck.zec_cksum = lwb->lwb_blk.blk_cksum;
 
@@ -1909,6 +1971,20 @@ zil_resume(zilog_t *zilog)
 	mutex_exit(&zilog->zl_lock);
 }
 
+void
+zil_suspend_dmu_sync(zilog_t *zilog)
+{
+    atomic_inc_32(&zilog->zl_no_dmu_sync);
+    txg_wait_synced(zilog->zl_dmu_pool, 0);
+}
+
+void
+zil_resume_dmu_sync(zilog_t *zilog)
+{
+        ASSERT(zilog->zl_no_dmu_sync >= 1);
+        atomic_dec_32(&zilog->zl_no_dmu_sync);
+}
+
 typedef struct zil_replay_arg {
 	zil_replay_func_t **zr_replay;
 	void		*zr_arg;
@@ -2098,6 +2174,146 @@ zil_vdev_offline(const char *osname, void *arg)
 	dmu_objset_rele(os, FTAG);
 	return (error);
 }
+
+/*
+ * ZIL Log Block encryption.
+ *
+ * The common part of each log record and the zil_chain_t at the start
+ * of the log block needs to be left in the clear.  The rest should be
+ * encrypted as it contains the actual transaction data.
+ *
+ * There is a special case that sometimes happens when the ZIL
+ * misguesses at the size of the data.  This results in a log block
+ * with no log records in it just a zil_chain_t.
+ *
+ * The zil_chain_t is added as authenticated data via the mech setup,
+ * this provides a cryptographic chaining of the log blocks since the
+ * MAC will include the ZIL sequence number which is monotonically
+ * increasing for the dataset.
+ *
+ * TX_WRITE log records are "special" since they have a blkptr_t embedded
+ * in them that needs to be in the clear, but for a small write instead of
+ * a block pointer there could be actual data in the log record.
+ */
+int
+zil_set_crypto_data(char *src, size_t size,
+                    void *dst, iovec_t **srciovp, iovec_t **dstiovp, size_t *cdlen,
+                    boolean_t encrypting)
+{
+    char *slrp, *dlrp;
+    zil_chain_t *szilc, *dzilc;
+    int reclen = 0, iovcnt = 0, csize = 0, cryptreclen = 0;
+    iovec_t *srciov, *dstiov;
+    int iovcheck = 0;
+    uint64_t len;
+    char *end;
+
+    ASSERT(src != NULL);
+    bcopy(src, dst, size);
+    szilc = (zil_chain_t *)src;
+    dzilc = (zil_chain_t *)dst;
+    slrp = (char *)(szilc + 1);
+    len = szilc->zc_nused - sizeof (zil_chain_t);
+    end = slrp + len;
+
+    if (len == 0) {
+        return (0);
+    }
+    for (slrp = (char *)(szilc + 1); slrp < end; slrp += reclen) {
+        lr_t *slr = (lr_t *)slrp;
+        reclen = slr->lrc_reclen;
+        if (slr->lrc_txtype == 0)
+            break;
+        if (slr->lrc_txtype == TX_WRITE &&
+            reclen != sizeof (lr_write_t)) {
+            /* We need 2 iovecs for TX_WRITE with embedded data */
+            iovcnt++;
+        }
+        iovcnt++;
+    }
+
+    /*
+     * iovcnt shouldn't be 0 (ie there must be log records in the block
+     * if zc_nused was non 0
+     */
+    ASSERT(iovcnt != 0);
+
+    /*
+     * We have iovcnt log records that need encrypting.
+     * Plus one more for the MAC
+     */
+    iovcheck = iovcnt;
+    if (encrypting) {
+        srciov = kmem_alloc(sizeof (iovec_t) * iovcnt, KM_SLEEP);
+        dstiov = kmem_alloc(sizeof (iovec_t) * (iovcnt + 1), KM_SLEEP);
+    } else {
+        srciov = kmem_alloc(sizeof (iovec_t) * (iovcnt + 1), KM_SLEEP);
+        dstiov = kmem_alloc(sizeof (iovec_t) * iovcnt, KM_SLEEP);
+    }
+
+    iovcnt = 0;
+    for (slrp = (char *)(szilc + 1), dlrp = (char *)(dzilc + 1);
+         slrp < end;
+         slrp += reclen, dlrp += reclen) {
+        lr_t *slr = (lr_t *)slrp;
+        lr_t *dlr = (lr_t *)dlrp;
+        reclen = slr->lrc_reclen;
+
+        if (slr->lrc_txtype == 0)
+            break;
+
+        cryptreclen = reclen - sizeof (lr_t);
+        if (slr->lrc_txtype == TX_WRITE) {
+            /*
+             * This is a TX_WRITE
+             * The blkptr needs to be in the clear for a claim
+             * but the rest should be encrypted.
+             */
+            cryptreclen = sizeof (lr_write_t) - sizeof (lr_t) -
+                sizeof (blkptr_t);
+            srciov[iovcnt].iov_base = (char *)slr + sizeof (lr_t);
+            srciov[iovcnt].iov_len = cryptreclen;
+            dstiov[iovcnt].iov_base = (char *)dlr + sizeof (lr_t);
+            dstiov[iovcnt].iov_len = cryptreclen;
+            csize += cryptreclen;
+            if (reclen != sizeof (lr_write_t)) {
+                iovcnt++;
+                cryptreclen = reclen - sizeof (lr_write_t);
+                srciov[iovcnt].iov_base = (char *)slr +
+                    sizeof (lr_write_t);
+                srciov[iovcnt].iov_len = cryptreclen;
+                dstiov[iovcnt].iov_base = (char *)dlr +
+                    sizeof (lr_write_t);
+                dstiov[iovcnt].iov_len = cryptreclen;
+                csize += cryptreclen;
+            }
+        } else {
+            srciov[iovcnt].iov_base = (char *)slr + sizeof (lr_t);
+            srciov[iovcnt].iov_len = cryptreclen;
+            dstiov[iovcnt].iov_base = (char *)dlr + sizeof (lr_t);
+            dstiov[iovcnt].iov_len = cryptreclen;
+            csize += cryptreclen;
+        }
+
+        iovcnt++;
+    }
+
+    ASSERT(iovcnt != 0);
+    ASSERT3U(iovcheck, ==, iovcnt);
+    ASSERT3U(csize, >, 0);
+    ASSERT3U(csize, <, size);
+    ASSERT3U(csize, <=, szilc->zc_nused);
+    ASSERT3U(dzilc->zc_nused, ==, szilc->zc_nused);
+    ASSERT3U(csize, <, ZIL_MAX_BLKSZ);
+
+    *srciovp = srciov;
+    *dstiovp = dstiov;
+    *cdlen = csize;
+
+    return (iovcnt);
+}
+
+
 
 #if defined(_KERNEL) && defined(HAVE_SPL)
 module_param(zil_replay_disable, int, 0644);
