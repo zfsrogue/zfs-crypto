@@ -52,6 +52,7 @@ Required work before Alpha:
 
 Current output:
 
+<pre>
 # dd if=/dev/zero of=~/src/pool-image.bin bs=1M count=1024
 
 # zpool create -f mypool ~/src/pool-image.bin
@@ -78,6 +79,6 @@ Nov  5 15:47:36 zfsdev kernel: [  324.219020] zio_decrypt exit
 0041b450  49 53 2e 64 49 52 45 43  54 4f 52 59 2e 69 53 2e  |IS.dIRECTORY.iS.|
 0041b460  68 4f 50 45 46 55 4c 4c  59 2e 65 4e 43 52 59 50  |hOPEFULLY.eNCRYP|
 0041b470  54 45 44 00 00 00 00 00  00 00 00 00 00 00 00 00  |TED.............|
-
+</pre>
 
 zfs/rogue
