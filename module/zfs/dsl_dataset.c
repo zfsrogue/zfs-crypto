@@ -2258,6 +2258,8 @@ dsl_dataset_stats(dsl_dataset_t *ds, nvlist_t *nv)
 	    ds->ds_userrefs);
 	dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_DEFER_DESTROY,
 	    DS_IS_DEFER_DESTROY(ds) ? 1 : 0);
+    dsl_prop_nvlist_add_uint64(nv, ZFS_PROP_KEYSTATUS,
+        dsl_dataset_keystatus(ds, B_FALSE));
 
 	if (ds->ds_phys->ds_prev_snap_obj != 0) {
 		uint64_t written, comp, uncomp;

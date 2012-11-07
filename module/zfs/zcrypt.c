@@ -779,6 +779,10 @@ zcrypt_key_lookup(spa_t *spa, uint64_t objset, uint64_t txg)
 	crypto_mechanism_t mech = { 0 };
 	zcrypt_key_t *key;
 
+#if _KERNEL
+    printk("zcrypt_key_lookup enter\n");
+#endif
+
 	skn = zcrypt_keystore_find_node(spa, objset, B_FALSE);
 	if (skn == NULL)
 		return (NULL);
@@ -808,6 +812,9 @@ zcrypt_key_lookup(spa_t *spa, uint64_t objset, uint64_t txg)
 	}
 	mutex_exit(&skn->skn_lock);
 
+#if _KERNEL
+    printk("zcrypt_key_lookup exit: key %p\n", key);
+#endif
 	return (key);
 }
 

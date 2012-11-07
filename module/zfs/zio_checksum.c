@@ -263,7 +263,8 @@ zio_checksum_error(zio_t *zio, zio_bad_cksum_t *info)
 
 	if (!ZIO_CHECKSUM_EQUAL(actual_cksum, expected_cksum)) {
 #if _KERNEL
-        printk("zio_checksum ignoring ECKSUM error!!\n");
+        // We know we are ignoring checksum, this is a bit noisy
+        //printk("zio_checksum ignoring ECKSUM error!!\n");
 #endif
 		//return (ECKSUM);
     }

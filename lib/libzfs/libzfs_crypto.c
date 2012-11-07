@@ -23,6 +23,21 @@
  * Copyright (c) 2007, 2011, Oracle and/or its affiliates. All rights reserved.
  */
 
+/*
+ * Cutting out sample code and running under Solaris 11, the key transforms
+ * come out as:
+ *
+ * Using key 'This.Is.A.Key' with len 13
+ * The salt picked was:
+ * 0xf2 0x61 0x01 0x50 0x73 0x54 0x9a 0xd1
+ * The produced key is len 16:
+ * 0x5c 0x95 0x64 0x42 0x00 0x82 0x1c 0x9e 0xd4 0xac 0x01 0x83 0xc4 0x9c 0x14 0x97
+ *
+ * So this data needs to be replicated on Linux to be compatible.
+ *
+ */
+
+
 #include <libintl.h>
 //#include <kmfapi.h>
 //#include <security/pkcs11.h>
@@ -899,7 +914,7 @@ zfs_key_load(zfs_handle_t *zhp, boolean_t mount, boolean_t share,
 	}
 
 	if (propsrctype == ZPROP_SRC_INHERITED) {
-#if 0
+#if 0 // FIXME
 		if (strcmp(source, ZONE_INVISIBLE_SOURCE) == 0) {
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 			    "key must be loaded from global zone."));
