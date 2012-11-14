@@ -12,7 +12,6 @@ libzpool_la_SOURCES = \
 	$(top_srcdir)/lib/libzpool/kernel.c \
 	$(top_srcdir)/lib/libzpool/taskq.c \
 	$(top_srcdir)/lib/libzpool/util.c \
-	$(top_srcdir)/include/sys/crypto/fakeit.c \
 	$(top_srcdir)/module/zcommon/zcrypt_common.c \
 	$(top_srcdir)/module/zcommon/zfs_comutil.c \
 	$(top_srcdir)/module/zcommon/zfs_deleg.c \

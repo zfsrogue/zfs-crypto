@@ -302,6 +302,9 @@ extern void avl_destroy(avl_tree_t *tree);
 
 
 
+extern boolean_t avl_is_empty(avl_tree_t *tree);
+
+
 #ifdef	__cplusplus
 }
 #endif
