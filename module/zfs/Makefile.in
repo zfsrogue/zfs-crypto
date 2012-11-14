@@ -92,5 +92,4 @@ $(MODULE)-objs += @top_srcdir@/module/zfs/zpl_super.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/zpl_xattr.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/zrlock.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/zvol.o
-$(MODULE)-objs += @top_srcdir@/include/sys/crypto/fakeit.o
 $(MODULE)-objs += @top_srcdir@/module/zcommon/zcrypt_common.o

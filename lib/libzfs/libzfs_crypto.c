@@ -58,8 +58,6 @@
 
 #define	MAXPROMPTLEN (ZFS_MAXNAMELEN + 35)   /* 35 = prompt - dataset name */
 
-// FIXME
-char *getpassphrase(const char *prompt);
 
 /*
  * Constants and functions for parsing/validating
@@ -245,6 +243,20 @@ zfs_can_prompt_if_needed(char *keysource)
 
 	return (B_TRUE);
 }
+
+
+/*
+ * Linux does not have the same limitation that Solaris has, of limiting
+ * getpass() to only 8 chars. Linux limit is 128 chars.
+ *
+ * However, it is listed as 'Obsolete' so an alternate implementation may be
+ * required.
+ */
+static char *getpassphrase(const char *prompt)
+{
+    return getpass(prompt);
+}
+
 
 static int
 get_passphrase(libzfs_handle_t *hdl, char **passphrase,
@@ -775,26 +787,30 @@ format_key:
 		if (cmd == ZFS_CRYPTO_KEY_LOAD) {
 			salt = zfs_prop_get_int(zhp, ZFS_PROP_SALT);
 		} else {
-#if 0 // FIXME
-			ret = pkcs11_get_random(&salt, sizeof (uint64_t));
-			if (ret) {
-				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "failed to obtain salt: %s."),
-				    pkcs11_strerror(ret));
-				errno = EINVAL;
-				ret = -1;
-				goto out;
-			}
-#endif
+
+
+            //get_random_bytes((void *)&salt, sizeof (uint64_t));
+            // Static salt during test
+            {
+                unsigned char *p;
+                p = (unsigned char *)&salt;
+                p[0] =  0xf2;
+                p[1] =  0x61;
+                p[2] =  0x01;
+                p[3] =  0x50;
+                p[4] =  0x73;
+                p[5] =  0x54;
+                p[6] =  0x9a;
+                p[7] =  0xd1;
+            }
 		}
 
         fprintf(stderr, "Key is '%s' and is len %u\r\n",
                 keydata, keydatalen);
 
         // FIXME
-        tmpkeydata = strdup(keydata);
-        tmpkeydatalen = keydatalen;
-        salt = 0x1234;
+        //tmpkeydata = strdup(keydata);
+        //tmpkeydatalen = keydatalen;
 
 #if 0 // FIXME
 		ret = SUNW_C_GetMechSession(CKM_PKCS5_PBKD2, &session);
@@ -829,6 +845,10 @@ format_key:
 			goto out;
 		}
 #endif
+
+        crypto_pass2key(keydata, keydatalen,
+                        (void *)&salt, sizeof(salt),
+                        keylen, (void **)&tmpkeydata, &tmpkeydatalen);
 
 		bcopy(tmpkeydata, zc->zc_crypto.zic_keydata, tmpkeydatalen);
 		bzero(tmpkeydata, tmpkeydatalen);

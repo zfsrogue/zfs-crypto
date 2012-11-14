@@ -57,6 +57,7 @@ zcrypt_key_allocate(void)
 void
 zcrypt_key_free(zcrypt_key_t *key)
 {
+#if _KERNEL
 	if (key == NULL)
 		return;
 
@@ -82,6 +83,7 @@ zcrypt_key_free(zcrypt_key_t *key)
 	bzero(key, sizeof (zcrypt_key_t));
 	kmem_free(key, sizeof (zcrypt_key_t));
 	key = NULL;
+#endif
 }
 
 zcrypt_key_t *
@@ -173,6 +175,7 @@ int
 zcrypt_wrap_key(zcrypt_key_t *wrappingkey, zcrypt_key_t *ptkey,
 	caddr_t *wkeybuf, size_t *wkeylen, uint64_t wcrypt)
 {
+#if _KERNEL
 	crypto_mechanism_t wmech;
 	crypto_data_t wkey_cdt, ptkey_cdt;
 	size_t ptkeylen;
@@ -286,7 +289,7 @@ out:
 
 	*wkeylen = sizeof (zcrypt_key_phys_t);
 	*wkeybuf = (caddr_t)wkeyphys;
-
+#endif
 	return (0);
 }
 
@@ -304,6 +307,7 @@ int
 zcrypt_unwrap_key(zcrypt_key_t *wk, uint64_t crypt,
     caddr_t wkeybuf, size_t wkeylen, zcrypt_key_t **zck)
 {
+#if _KERNEL
 	crypto_mechanism_t wmech;
 	crypto_data_t wkey_cdt, ptkey_cdt;
 	zcrypt_key_t *tmpzck;
@@ -425,9 +429,9 @@ zcrypt_unwrap_key(zcrypt_key_t *wk, uint64_t crypt,
 	kmem_free(uwrapmac, uwrapmaclen);
 
 	*zck = tmpzck;
+#endif
 	return (0);
 }
-
 
 /*
  * zcrypt_key_from_ioc
@@ -774,14 +778,13 @@ zcrypt_keychain_fini(avl_tree_t keychain)
 zcrypt_key_t *
 zcrypt_key_lookup(spa_t *spa, uint64_t objset, uint64_t txg)
 {
+	zcrypt_key_t *key = NULL;
+#if _KERNEL
 	zcrypt_keystore_node_t *skn;
 	zcrypt_keychain_node_t *dkn;
 	crypto_mechanism_t mech = { 0 };
-	zcrypt_key_t *key;
 
-#if _KERNEL
     printk("zcrypt_key_lookup enter\n");
-#endif
 
 	skn = zcrypt_keystore_find_node(spa, objset, B_FALSE);
 	if (skn == NULL)
@@ -812,7 +815,6 @@ zcrypt_key_lookup(spa_t *spa, uint64_t objset, uint64_t txg)
 	}
 	mutex_exit(&skn->skn_lock);
 
-#if _KERNEL
     printk("zcrypt_key_lookup exit: key %p\n", key);
 #endif
 	return (key);
@@ -867,7 +869,9 @@ zcrypt_mech_available(enum zio_crypt crypt)
 	if (crypt == ZIO_CRYPT_INHERIT || crypt == ZIO_CRYPT_OFF)
 		return (TRUE);
 
+#if _KERNEL
 	mech = crypto_mech2id(zio_crypt_table[crypt].ci_mechname);
+#endif
 
 	if (mech == CRYPTO_MECH_INVALID) {
 		return (FALSE);
