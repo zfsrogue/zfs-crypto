@@ -157,7 +157,7 @@ zio_crypt_gen_data_iv(int crypt, int type, boolean_t dedup, void *data,
 	size_t ivlen = ZIO_CRYPT_DATA_IVLEN;
 	uint16_t _iv[6];
 	uint64_t ctr;
-
+#if _KERNEL
 	ASSERT3U(sizeof (_iv), ==, ZIO_CRYPT_DATA_IVLEN);
 	bzero(iv, ivlen);
 
@@ -209,6 +209,7 @@ zio_crypt_gen_data_iv(int crypt, int type, boolean_t dedup, void *data,
 	_iv[4] = BE_16(BF64_GET(ctr, 16, 16));
 	_iv[5] = BE_16(BF64_GET(ctr,  0, 16));
 	bcopy(&_iv, iv, sizeof (_iv));
+#endif
 }
 
 static crypto_mechanism_t *
@@ -333,6 +334,8 @@ zio_encrypt_data(int crypt, zcrypt_key_t *key, zbookmark_t *bookmark,
     uint64_t txg, int type, boolean_t dedup, void *src, uint64_t size,
     void **destp, char *mac, char *iv)
 {
+	int err = EIO;
+#if _KERNEL
 	crypto_data_t plaintext, ciphertext;
 	crypto_mechanism_t *mech;
 	iovec_t *srciov = NULL, *dstiov = NULL;
@@ -340,7 +343,6 @@ zio_encrypt_data(int crypt, zcrypt_key_t *key, zbookmark_t *bookmark,
 	caddr_t dest;
 	uint_t iovcnt;
 	size_t maclen;
-	int err;
 	boolean_t lsrc = B_FALSE;
 #if defined (ZFS_DEBUG) && defined (_KERNEL)
 	void *srccopy;
@@ -445,7 +447,6 @@ retry:
 
 #if _KERNEL
     printk("zio_crypt back with %d\n", err);
-#endif
 
 	switch (err) {
 	case CRYPTO_SUCCESS:
@@ -472,7 +473,6 @@ retry:
 		err = EIO;
 	}
 
-#if _KERNEL
     printk("zio_crypt free mech\n");
 #endif
 
@@ -502,6 +502,8 @@ out:
     printk("zio_crypt leaving. %d\n", err);
 #endif
 
+#endif
+
 	return (err);
 }
 
@@ -515,13 +517,14 @@ zio_decrypt_data(zcrypt_key_t *key, zbookmark_t *bookmark,
     uint64_t txg, int type, void *src, uint64_t srcsize, char *mac, char *iv,
     void *dest, uint64_t destsize)
 {
+	int err = EIO;
+#if _KERNEL
 	crypto_data_t ciphertext, plaintext;
 	crypto_mechanism_t *mech;
 	iovec_t *srciov = NULL, *dstiov = NULL;
 	uio_t srcuio = { 0 }, dstuio = { 0 };
 	size_t maclen;
 	uint_t iovcnt;
-	int err;
 
 	ASSERT3U(destsize, <=, ZIO_CRYPT_MAX_CCM_DATA);
 
@@ -600,7 +603,9 @@ retry:
 	}
 	case CRYPTO_OLD_CTX_TEMPLATE:
 		key->zk_ctx_tmpl_valid = B_FALSE;
+#if _KERNEL
 		crypto_destroy_ctx_template(key->zk_ctx_tmpl);
+#endif
 		goto retry;
 	case CRYPTO_INVALID_MAC:
 		err = ECKSUM;
@@ -620,8 +625,10 @@ retry:
 	if (dstiov != NULL) {
 		kmem_free(dstiov, sizeof (iovec_t) * dstuio.uio_iovcnt);
 	}
+#endif
 	return (err);
 }
+
 
 /*
  * Encrypted Crash Dump device support.
@@ -668,9 +675,8 @@ zvol_dump_crypt_common(spa_t *spa, uint64_t objset,
 	mech.cm_param = (char *)ctrp;
 	mech.cm_param_len = sizeof (CK_AES_CTR_PARAMS);
 
-#if _KERNEL
     printk("zio_crypt 2\n");
-#endif
+
 	if (encrypt) {
 		err = crypto_encrypt(&mech, &cdt, &k->zk_key, NULL, NULL, NULL);
 	} else {
