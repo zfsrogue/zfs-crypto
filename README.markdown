@@ -23,23 +23,21 @@ The crypto/api/ header files are from OpenSolaris.
 The crypto/api implementation is brand new, and supports "bare
 minimum" features as needed by ZFS only.
 
+Current support is in BETA. Real ciphers are used, but key generation
+function could do with more work. It is NOT compatible with Solaris pools.
 
-Current support is at "proof of concept" level only. It is NOT usable.
 
+Required work:
 
-Required work before Alpha:
+* Implement more ciphers besides default.
 
-* Implement (at least) default cipher, instead of current XOR$20
-
-* Implement MAC checksum, currently checksum errors are ignored.
+* MACs are in use, but compute_mac() is empty, not called?
 
 * Prompt for key (getpassphrase) needs implementing. It is possible
   that getpass() will suffice on Linux, as it does not limit input to
   8 chars.
 
-* Key needs to be CK_AES prepared.
-
-* Cipher functions need to be moved to SPL/ layer.
+* Key needs to be CK_AES prepared, better than current
 
 * All "// FIXME" should be inspected. In particular, known areas
   which differ are PROP_ALIAS, PROP_INHERIT, crypto vs userquota,
