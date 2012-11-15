@@ -791,7 +791,20 @@ format_key:
 
             //get_random_bytes((void *)&salt, sizeof (uint64_t));
             // Static salt during test
-            {
+            int fd;
+            fd = open("/dev/random", O_RDONLY);
+            if ((fd < 0) ||
+                read(fd, &salt, sizeof(salt)) != sizeof(salt)) {
+                zfs_error_aux(hdl,
+                              dgettext(TEXT_DOMAIN,
+                                       "failed to open /dev/random"));
+                errno = EINVAL;
+                ret = -1;
+                goto out;
+            }
+            close(fd);
+
+            if (0) {
                 unsigned char *p;
                 p = (unsigned char *)&salt;
                 p[0] =  0xf2;
