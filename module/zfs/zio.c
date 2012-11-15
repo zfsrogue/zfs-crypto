@@ -400,7 +400,9 @@ zio_decrypt(zio_t *zio, void *data, uint64_t size, void *arg)
     ASSERT3U(spa_version(zio->io_spa), >=, SPA_VERSION_CRYPTO);
 
 #if _KERNEL
+#ifdef ZFS_CRYPTO_VERBOSE
 	printk("zio_decrypt enter: %d\n", zio->io_error);
+#endif
 #endif
 
     if (zio->io_error != 0) {
@@ -425,7 +427,9 @@ zio_decrypt(zio_t *zio, void *data, uint64_t size, void *arg)
                                      (char *)&mac, (char *)&iv, data, size);
     zcrypt_key_release(key, zio);
 #if _KERNEL
+#ifdef ZFS_CRYPTO_VERBOSE
 	printk("zio_decrypt exit\n");
+#endif
 #endif
 }
 
@@ -1065,7 +1069,9 @@ zio_read_bp_init(zio_t *zio)
                 return (ZIO_PIPELINE_CONTINUE);
             }
 #if _KERNEL
+#ifdef ZFS_CRYPTO_VERBOSE
 			printk("zio read_bp_init calling decrypt\n");
+#endif
 #endif
             zcrypt_key_hold(key, zio);
             cbuf = zio_buf_alloc(psize);
@@ -1125,7 +1131,9 @@ zio_write_bp_init(zio_t *zio)
             zcrypt_key_hold(key, zio);
 
 #if _KERNEL
+#ifdef ZFS_CRYPTO_VERBOSE
     printk("zio encrypt_data 1\n");
+#endif
 #endif
 
             zio->io_error = zio_encrypt_data(crypt, key,
@@ -1208,20 +1216,26 @@ zio_write_bp_init(zio_t *zio)
         zcrypt_key_hold(key, zio);
 
 #if _KERNEL
+#ifdef ZFS_CRYPTO_VERBOSE
     printk("zio encrypt_data 2\n");
+#endif
 #endif
         VERIFY3U(zio_encrypt_data(crypt, key, &zio->io_bookmark,
                                   zio->io_txg, type, zp->zp_dedup,
                                   zio->io_data, psize, &ebuf,
                                   (char *)&mac, (char *)&iv), ==, 0);
 #if _KERNEL
+#ifdef ZFS_CRYPTO_VERBOSE
         printk("zio encrypt_data 2 key_release\n");
+#endif
 #endif
 
         zcrypt_key_release(key, zio);
 
 #if _KERNEL
+#ifdef ZFS_CRYPTO_VERBOSE
         printk("zio encrypt_data 2 push_transform\n");
+#endif
 #endif
         zio_push_transform(zio, ebuf, psize, psize, NULL, NULL);
         ASSERT3U(checksum, ==, ZIO_CHECKSUM_SHA256_MAC);

@@ -440,13 +440,17 @@ zio_encrypt_data(int crypt, zcrypt_key_t *key, zbookmark_t *bookmark,
 	ASSERT(mech != NULL);
 retry:
 #if _KERNEL
+#ifdef ZFS_CRYPTO_VERBOSE
     printk("zio_crypt 1\n");
+#endif
 #endif
 	err = crypto_encrypt(mech, &plaintext, &key->zk_key, key->zk_ctx_tmpl,
 	    &ciphertext, NULL);
 
 #if _KERNEL
+#ifdef ZFS_CRYPTO_VERBOSE
     printk("zio_crypt back with %d\n", err);
+#endif
 
 	switch (err) {
 	case CRYPTO_SUCCESS:
@@ -473,7 +477,9 @@ retry:
 		err = EIO;
 	}
 
+#ifdef ZFS_CRYPTO_VERBOSE
     printk("zio_crypt free mech\n");
+#endif
 #endif
 
 	zio_crypt_free_mech(mech);
@@ -499,7 +505,9 @@ out:
 	}
 
 #if _KERNEL
+#ifdef ZFS_CRYPTO_VERBOSE
     printk("zio_crypt leaving. %d\n", err);
+#endif
 #endif
 
 #endif
@@ -610,7 +618,9 @@ retry:
 	case CRYPTO_INVALID_MAC:
 		err = ECKSUM;
 #if _KERNEL
+#ifdef ZFS_CRYPTO_VERBOSE
         printk("zio_crypt setting ECKSUM\n");
+#endif
 #endif
 		break;
 	default:
@@ -675,7 +685,9 @@ zvol_dump_crypt_common(spa_t *spa, uint64_t objset,
 	mech.cm_param = (char *)ctrp;
 	mech.cm_param_len = sizeof (CK_AES_CTR_PARAMS);
 
+#ifdef ZFS_CRYPTO_VERBOSE
     printk("zio_crypt 2\n");
+#endif
 
 	if (encrypt) {
 		err = crypto_encrypt(&mech, &cdt, &k->zk_key, NULL, NULL, NULL);
