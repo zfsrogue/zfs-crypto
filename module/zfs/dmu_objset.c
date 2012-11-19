@@ -837,10 +837,6 @@ dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
 
 	ASSERT(strchr(name, '@') == NULL);
 	err = dsl_dir_open(name, FTAG, &pdd, &tail);
-#if _KERNEL
-    printk("called dsl_dir_open %d\n", err);
-#endif
-
 
 	if (err)
 		return (err);

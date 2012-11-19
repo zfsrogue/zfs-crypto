@@ -246,6 +246,15 @@ zfs_can_prompt_if_needed(char *keysource)
 
 
 /*
+ * Move this to a header file
+ */
+int crypto_pass2key(unsigned char *keydata, size_t keydatalen,
+                    void *salt, size_t saltlen,
+                    size_t desired_keylen,
+                    void **out_keydata, size_t *out_keylen);
+
+
+/*
  * Linux does not have the same limitation that Solaris has, of limiting
  * getpass() to only 8 chars. Linux limit is 128 chars.
  *
@@ -257,6 +266,82 @@ static char *getpassphrase(const char *prompt)
     return getpass(prompt);
 }
 
+/*
+ * This could possibly go somewhere more appropriate
+ */
+/*
+ * This function takes a char[] and length of hexadecimal values and
+ * returns a malloc'ed byte array with the length of that new byte array.
+ * The caller needs to provide a pointer to where this new malloc'ed byte array
+ * will be passed back; as well as, a pointer for the length of the new
+ * byte array.
+ *
+ * The caller is responsible for freeing the malloc'ed array when done
+ *
+ * The return code is 0 if successful, otherwise the errno value is returned.
+ */
+int
+hexstr_to_bytes(char *hexstr, size_t hexlen, uchar_t **bytes, size_t *blen)
+{
+    int i, ret = 0;
+    unsigned char ch;
+    uchar_t *b = NULL;
+
+    *bytes = NULL;
+    *blen = 0;
+
+    if (hexstr == NULL || (hexlen % 2 == 1))
+        return (EINVAL);
+
+    if (hexstr[0] == '0' && ((hexstr[1] == 'x') || (hexstr[1] == 'X'))) {
+        hexstr += 2;
+        hexlen -= 2;
+    }
+
+    *blen = (hexlen / 2);
+
+    b = malloc(*blen);
+    if (b == NULL) {
+        *blen = 0;
+        return (errno);
+    }
+
+    for (i = 0; i < hexlen; i++) {
+        ch = (unsigned char) *hexstr;
+
+        if (!isxdigit(ch)) {
+            ret = EINVAL;
+            goto out;
+        }
+
+        hexstr++;
+
+        if ((ch >= '0') && (ch <= '9'))
+            ch -= '0';
+        else if ((ch >= 'A') && (ch <= 'F'))
+            ch = ch - 'A' + 10;
+        else if ((ch >= 'a') && (ch <= 'f'))
+            ch = ch - 'a' + 10;
+
+        if (i & 1)
+            b[i/2] |= ch;
+        else
+            b[i/2] = (ch << 4);
+    }
+
+ out:
+    if (b != NULL && ret != 0) {
+        free(b);
+        *blen = 0;
+    } else
+        *bytes = b;
+
+    return (ret);
+}
+
+
+
+
 
 static int
 get_passphrase(libzfs_handle_t *hdl, char **passphrase,
@@ -267,8 +352,6 @@ get_passphrase(libzfs_handle_t *hdl, char **passphrase,
 	char *tmpbuf = NULL;
 	int min_psize = 8;
 	char dsname[MAXNAMELEN];
-
-    fprintf(stderr, "in get_assphrase\r\n");
 
 	zfs_cmd_target_dsname(zc, cmd, dsname, sizeof (dsname));
 	if (format == KEY_FORMAT_HEX) {
@@ -578,8 +661,6 @@ key_hdl_to_zc(libzfs_handle_t *hdl, zfs_handle_t *zhp, char *keysource,
 	uint64_t salt;
 	//struct cb_arg_curl cb_curl = { 0 };
 
-    fprintf(stderr, "in key_hdl_to_zc\r\n");
-
 	zc->zc_crypto.zic_clone_newkey = hdl->libzfs_crypt.zc_clone_newkey;
 
 	if (!keysource_prop_parser(keysource, &format, &locator, &uri)) {
@@ -760,10 +841,8 @@ format_key:
 		 * so to avoid a memory leak we use a tmpkeydata buffer
 		 * and bcopy it.
 		 */
-#if 0        // FIXME
 		ret = hexstr_to_bytes(keydata, keydatalen,
 		    (uchar_t **)&tmpkeydata, &tmpkeydatalen);
-#endif
 
 		if (ret) {
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
@@ -818,9 +897,6 @@ format_key:
             }
 		}
 
-        fprintf(stderr, "Key is '%s' and is len %u\r\n",
-                keydata, keydatalen);
-
         // FIXME
         //tmpkeydata = strdup(keydata);
         //tmpkeydatalen = keydatalen;
@@ -859,7 +935,7 @@ format_key:
 		}
 #endif
 
-        crypto_pass2key(keydata, keydatalen,
+        crypto_pass2key((unsigned char *)keydata, keydatalen,
                         (void *)&salt, sizeof(salt),
                         keylen, (void **)&tmpkeydata, &tmpkeydatalen);
 
@@ -914,8 +990,6 @@ zfs_key_load(zfs_handle_t *zhp, boolean_t mount, boolean_t share,
 	uint64_t ret, crypt, keystatus;
 	zfs_cmd_t zc = { {0 }};
 	char errbuf[1024];
-
-    fprintf(stderr, "zfs_key_load\r\n");
 
 
 	(void) strlcpy(zc.zc_name, zfs_get_name(zhp), sizeof (zc.zc_name));

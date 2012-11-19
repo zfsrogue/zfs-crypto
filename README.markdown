@@ -25,17 +25,9 @@ minimum" features as needed by ZFS only.
 
 Current support is in BETA. Real ciphers are used, but key generation
 function could do with more work. It is NOT compatible with Solaris pools.
-
-
-Required work:
-
-* Implement more ciphers besides default.
+Currently it is the authentication MAC that appears to differ.
 
 * MACs are in use, but compute_mac() is empty, not called?
-
-* Prompt for key (getpassphrase) needs implementing. It is possible
-  that getpass() will suffice on Linux, as it does not limit input to
-  8 chars.
 
 * Key needs to be CK_AES prepared, better than current
 
@@ -45,38 +37,20 @@ Required work:
 * Removed KEY methods "https URI" (requires curl) and pkcs11 types.
 
 * Undo the POOL VERSION=30, put it back to 28, and make CRYPTO be a
-  "Named Extension" instead.
+  "Named Extension" instead. ZFS On Linux currently does not support
+  "feature@" properties.
 
 
-Current output:
+Example:
 
-<pre>
-# dd if=/dev/zero of=~/src/pool-image.bin bs=1M count=1024
+# zfs create -o encryption=aes-256-gcm mypool/BOOM
+  Enter passphrase for 'mypool/BOOM':
+  Enter again:
+  kernel: [11266.250594] spl-crypto: Cipher test 'CKM_AES_CCM' -> 'sun-ccm(aes)' successful.
+# zfs list
+  NAME          USED  AVAIL  REFER  MOUNTPOINT
+  mypool        142K   984M    31K  /mypool
+  mypool/BOOM    31K   984M    31K  /mypool/BOOM
 
-# zpool create -f mypool ~/src/pool-image.bin
-
-# zfs create -o encryption=on mypool/BOOM
-
-in key_hdl_to_zc
-in get_assphrase
-Should ask for password here:
-Should ask for password here:
-Key is 'I'M LIZARD QUEEN' and is len 16
-Nov  5 15:47:36 zfsdev kernel: [  324.188602] in CREATE
-Nov  5 15:47:36 zfsdev kernel: [  324.188606]  version OK
-[...]
-Nov  5 15:47:36 zfsdev kernel: [  324.219017] crypto_decrypt IOV (ffff88003a98b200 -> ffff88003a98ba00) curriov 0, iovlen 0x0200
-Nov  5 15:47:36 zfsdev kernel: [  324.219019] crypto_decrypt: done
-Nov  5 15:47:36 zfsdev kernel: [  324.219020] zio_decrypt exit
-
-# mkdir /mypool/BOOM/This.Directory.Is.Hopefully.Encrypted
-
-# hexdump -C ../pool-image.bin |less
-
-0041b440  07 00 00 00 00 00 00 40  00 00 00 00 00 00 74 48  |.......@......tH|
-0041b450  49 53 2e 64 49 52 45 43  54 4f 52 59 2e 69 53 2e  |IS.dIRECTORY.iS.|
-0041b460  68 4f 50 45 46 55 4c 4c  59 2e 65 4e 43 52 59 50  |hOPEFULLY.eNCRYP|
-0041b470  54 45 44 00 00 00 00 00  00 00 00 00 00 00 00 00  |TED.............|
-</pre>
 
 zfs/rogue

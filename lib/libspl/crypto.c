@@ -37,7 +37,9 @@ int crypto_pass2key(unsigned char *keydata, size_t keydatalen,
     unsigned char iv[16] = { 0 };
     unsigned char statickey[16] = { 0 };
 
+#ifdef VERBOSE
     printf("In crypto_pass2key: keylen %ld\n", keydatalen);
+#endif
 
     // This needs fixing, we use at-most 16 chars of the password.
     memcpy(statickey, keydata, keydatalen < sizeof(statickey) ? keydatalen :
@@ -45,7 +47,9 @@ int crypto_pass2key(unsigned char *keydata, size_t keydatalen,
 
     if (aes_setkey_enc(&aes, statickey, sizeof(statickey) * 8)) goto out;
 
+#ifdef VERBOSE
     printf("Key set ok\n");
+#endif
 
     // Sun uses ITERATIONS=1000
     // "i" is 4 byte integer of iterations
@@ -76,11 +80,12 @@ int crypto_pass2key(unsigned char *keydata, size_t keydatalen,
     if (i < iterations) goto out;
 
 
+#ifdef VERBOSE
     printf("Done with keygen: %ld\n", desired_keylen);
     for (i = 0; i < desired_keylen; i++)
         printf("0x%02x ", buffer[i]);
     printf("\n");
-
+#endif
 
     if (out_keydata) {
         *out_keydata = buffer;
