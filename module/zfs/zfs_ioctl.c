@@ -184,17 +184,11 @@ zfs_earlier_version(const char *name, int version)
 
 	if (spa_open(name, &spa, FTAG) == 0) {
 		if (spa_version(spa) < version) {
-#if _KERNEL
-		  printk(" earlier version %d < %d\n", spa_version(spa), version);
-#endif
 			spa_close(spa, FTAG);
 			return (1);
 		}
 		spa_close(spa, FTAG);
 	}
-#if _KERNEL
-	printk(" version OK\n");
-#endif
 	return (0);
 }
 
@@ -209,17 +203,10 @@ zpl_earlier_version(const char *name, int version)
 	objset_t *os;
 	boolean_t rc = B_TRUE;
 
-#if _KERNEL
-	printk(" XXXX zpl_earlier_version %d\n", version);
-#endif
-
 	if (dmu_objset_hold(name, FTAG, &os) == 0) {
 		uint64_t zplversion;
 
 		if (dmu_objset_type(os) != DMU_OST_ZFS) {
-#if _KERNEL
-		  printk(" zpl_earlier_version NOT FS!\n");
-#endif
 			dmu_objset_rele(os, FTAG);
 			return (B_TRUE);
 		}
@@ -227,10 +214,6 @@ zpl_earlier_version(const char *name, int version)
 		if (zfs_get_zplprop(os, ZFS_PROP_VERSION, &zplversion) == 0)
 			rc = zplversion < version;
 		dmu_objset_rele(os, FTAG);
-#if _KERNEL
-		printk(" XXXX zpl_earlier_version %d < %d\n",
-		       (int)zplversion, (int)version);
-#endif
 	}
 	return (rc);
 }
@@ -2314,9 +2297,6 @@ zfs_set_prop_nvlist(const char *dsname, zprop_source_t source, nvlist_t *nvl,
 	nvlist_t *errors;
 	nvlist_t *retrynvl;
 
-#if _KERNEL
-	printk("set_prop enter\n");
-#endif
 	VERIFY(nvlist_alloc(&genericnvl, NV_UNIQUE_NAME, KM_SLEEP) == 0);
 	VERIFY(nvlist_alloc(&errors, NV_UNIQUE_NAME, KM_SLEEP) == 0);
 	VERIFY(nvlist_alloc(&retrynvl, NV_UNIQUE_NAME, KM_SLEEP) == 0);
@@ -2328,9 +2308,6 @@ retry:
 		zfs_prop_t prop = zfs_name_to_prop(propname);
 		int err = 0;
 
-#if _KERNEL
-		printk("set_prop playing with '%s'\n", propname);
-#endif
 		/* decode the property value */
 		propval = pair;
 		if (nvpair_type(pair) == DATA_TYPE_NVLIST) {
@@ -2383,17 +2360,10 @@ retry:
 			}
 		}
 
-#if _KERNEL
-		printk(" so far %d\n", err);
-#endif
-
 		/* Validate permissions */
 		if (err == 0)
 			err = zfs_check_settable(dsname, pair, CRED());
 
-#if _KERNEL
-		printk(" so far2 %d\n", err);
-#endif
 		if (err == 0) {
 			err = zfs_prop_set_special(dsname, source, pair);
 			if (err == -1) {
@@ -2420,10 +2390,6 @@ retry:
 		nvl = retrynvl;
 		goto retry;
 	}
-
-#if _KERNEL
-	printk("set_prop notempty test\n");
-#endif
 
 	if (!nvlist_empty(genericnvl) &&
 	    dsl_props_set(dsname, source, genericnvl) != 0) {
@@ -2460,12 +2426,6 @@ retry:
 				VERIFY(nvlist_add_int32(errors, propname,
 				    err) == 0);
 
-#if _KERNEL
-				printk("set_prop failed on '%s' %d\n",
-				       propname, err);
-#endif
-
-
 			}
 		}
 	}
@@ -2483,12 +2443,6 @@ retry:
 		nvlist_free(errors);
 	else
 		*errlist = errors;
-
-#if _KERNEL
-	printk("set_prop returning with %d\n",
-	       rv);
-#endif
-
 
 	return (rv);
 }
@@ -2899,9 +2853,6 @@ zfs_fill_zplprops_impl(objset_t *os, uint64_t zplver,
 	int error;
 
 	ASSERT(zplprops != NULL);
-#if _KERNEL
-	printk("zfs_fill_zplprops_impl enter\n");
-#endif
 
 
 	/*
@@ -2972,16 +2923,6 @@ zfs_fill_zplprops_impl(objset_t *os, uint64_t zplver,
 	if (is_ci)
 		*is_ci = (sense == ZFS_CASE_INSENSITIVE);
 
-#if _KERNEL
-    {
-        uint64_t zplversion = 999;
-
-        zfs_get_zplprop(os, ZFS_PROP_VERSION, &zplversion);
-
-        printk("zfs_fill_zplprops_impl exit, ZFS version %llu\n",
-               zplversion);
-    }
-#endif
 	return (0);
 }
 
@@ -3019,15 +2960,8 @@ zfs_fill_zplprops(const char *dataset, nvlist_t *createprops,
 	if ((error = dmu_objset_hold(parentname, FTAG, &os)) != 0)
 		return (error);
 
-#if _KERNEL
-	printk("fill calling zplprops\n");
-#endif
-
 	error = zfs_fill_zplprops_impl(os, zplver, fuids_ok, sa_ok, createprops,
 	    zplprops, is_ci);
-#if _KERNEL
-	printk("fill exit %d\n",error);
-#endif
 
 	dmu_objset_rele(os, FTAG);
 	return (error);
@@ -3156,14 +3090,7 @@ zfs_ioc_create(zfs_cmd_t *zc)
 	zct.zct_zplprops = NULL;
 	zct.zct_props = nvprops;
 
-#if _KERNEL
-    printk("in CREATE\n");
-#endif
-
     if ((error = zfs_get_crypto_ctx(zc, &dcc)) != 0) {
-#if _KERNEL
-        printk("get_crypto_ctsx failed\n");
-#endif
         return (error);
     }
 
@@ -3250,11 +3177,6 @@ zfs_ioc_create(zfs_cmd_t *zc)
 		error = dmu_objset_create(zc->zc_name, type,
                                   is_insensitive ? DS_FLAG_CI_DATASET : 0, &dcc,
                                   cbfunc, &zct);
-#if _KERNEL
-        printk("called dmu_objset_create %d\n", error);
-        zpl_earlier_version(zc->zc_name, 5);
-#endif
-
 		nvlist_free(zct.zct_zplprops);
 	}
 
@@ -3264,20 +3186,13 @@ zfs_ioc_create(zfs_cmd_t *zc)
 	if (error == 0) {
 		error = zfs_set_prop_nvlist(zc->zc_name, ZPROP_SRC_LOCAL,
 		    nvprops, NULL);
-#if _KERNEL
-		printk("zfs_set_prop_nvlist said %d\n", error);
-#endif
+
 		error = 0;
 
 		if (error != 0)
 			(void) dmu_objset_destroy(zc->zc_name, B_FALSE);
 	}
 	nvlist_free(nvprops);
-
-#if _KERNEL
-	printk("zfs_create returning with %d\n", error);
-    zpl_earlier_version(zc->zc_name, 5);
-#endif
 
 	return (error);
 }
@@ -3591,10 +3506,6 @@ zfs_check_settable(const char *dsname, nvpair_t *pair, cred_t *cr)
 	uint64_t intval;
 	int err;
 
-#if _KERNEL
-	printk("check_settable('%s') %d\n", propname, prop);
-#endif
-
 	if (prop == ZPROP_INVAL) {
 		if (zfs_prop_user(propname)) {
 			if ((err = zfs_secpolicy_write_perms(dsname,
@@ -3692,25 +3603,14 @@ zfs_check_settable(const char *dsname, nvpair_t *pair, cred_t *cr)
 		break;
 
     case ZFS_PROP_ENCRYPTION:
-#if _KERNEL
-		printk(" encryption baby\n");
-#endif
-
         if (zfs_earlier_version(dsname, SPA_VERSION_CRYPTO))
             return (ENOTSUP);
-#if _KERNEL
-	printk(" pool version check OK\n");
-#endif
+
         if (zpl_earlier_version(dsname, ZPL_VERSION_SA))
             return (ENOTSUP);
-#if _KERNEL
-	printk(" zpl version check OK\n");
-#endif
+
         if (zfs_is_bootfs(dsname) && !BOOTFS_CRYPT_VALID(intval))
             return (ERANGE);
-#if _KERNEL
-		printk(" encryption OK\n", err);
-#endif
 
         break;
 
@@ -3732,9 +3632,6 @@ zfs_check_settable(const char *dsname, nvpair_t *pair, cred_t *cr)
 		break;
 	}
 
-#if _KERNEL
-	printk(" check leaving for secpolicy\n", err);
-#endif
 	return (zfs_secpolicy_setprop(dsname, prop, pair, CRED()));
 }
 

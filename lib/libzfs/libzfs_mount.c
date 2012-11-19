@@ -412,11 +412,8 @@ zfs_mount(zfs_handle_t *zhp, const char *options, int flags)
      * Don't need to check ZFS_PROP_ENCRYPTION because encrypted
      * datasets have keystatus of ZFS_CRYPT_KEY_NONE.
      */
-    fprintf(stderr, "zfs_mount: mount, keystatus is %d\r\n",
-            zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS));
     if (zfs_prop_get_int(zhp, ZFS_PROP_KEYSTATUS) ==
         ZFS_CRYPT_KEY_UNAVAILABLE) {
-        fprintf(stderr, "loading KEY\r\n");
         (void )zfs_key_load(zhp, B_FALSE, B_FALSE, B_FALSE);
     }
 
