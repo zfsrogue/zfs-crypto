@@ -1237,6 +1237,14 @@ badlabel:
             if (intval == ZIO_CRYPT_OFF)
                 break;
 
+            if (type == ZFS_TYPE_VOLUME) {
+                zfs_error_aux(hdl,
+                              dgettext(TEXT_DOMAIN, "encryption "
+                                       "is currently not supported on volumes"));
+                (void) zfs_error(hdl,
+                                 EZFS_PROPREADONLY, errbuf);
+                goto error;
+            }
             /*
              * Since encryption is on, we must make sure the user
              * did not specify a checksum so we can set it to

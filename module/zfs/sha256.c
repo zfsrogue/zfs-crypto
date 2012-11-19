@@ -135,7 +135,13 @@ zio_checksum_SHAMAC(const void *buf, uint64_t size, zio_cksum_t *zcp)
 {
     zio_cksum_t tmp;
 
-    // FIXME, disabling checksum until ciphers implemented
+    // It is unknown if this function is correct, wrt to Solaris
+#if _KERNEL
+#ifdef ZFS_CRYPTO_VERBOSE
+    printk("SHAMAC called.\n");
+#endif
+#endif
+
 #if 1
     zio_checksum_SHA256(buf, size, &tmp);
 #else
