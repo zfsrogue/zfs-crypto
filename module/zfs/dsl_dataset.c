@@ -1062,11 +1062,14 @@ dsl_dataset_destroy(dsl_dataset_t *ds, void *tag, boolean_t defer)
 	dsl_sync_task_group_t *dstg;
 	objset_t *os;
 	dsl_dir_t *dd;
-	uint64_t obj;
+	uint64_t obj, dsobj;
 	struct dsl_ds_destroyarg dsda = { 0 };
 	dsl_dataset_t *dummy_ds;
+    spa_t *spa;
 
 	dsda.ds = ds;
+    dsobj = ds->ds_object;
+    spa = dsl_dataset_get_spa(ds);
 
 	if (dsl_dataset_is_snapshot(ds)) {
 		/* Destroying a snapshot is simpler */
@@ -1196,9 +1199,16 @@ dsl_dataset_destroy(dsl_dataset_t *ds, void *tag, boolean_t defer)
 	if (err) {
 		dsl_dir_close(dd, FTAG);
 	} else {
+#if _KERNEL
+        printk("before keystore remove\n");
+#endif
 		/* Remove the key from the keystore for encrypted datasets. */
-		err = zcrypt_keystore_remove(dsl_dataset_get_spa(ds),
-                                     ds->ds_object);
+		err = zcrypt_keystore_remove(spa,
+                                     dsobj);
+#if _KERNEL
+        printk("after keystore remove\n");
+#endif
+
 	}
 out_free:
 	kmem_free(dummy_ds, sizeof (dsl_dataset_t));
