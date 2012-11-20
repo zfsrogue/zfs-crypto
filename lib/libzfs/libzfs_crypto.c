@@ -867,13 +867,12 @@ format_key:
 			salt = zfs_prop_get_int(zhp, ZFS_PROP_SALT);
 		} else {
 
-
             //get_random_bytes((void *)&salt, sizeof (uint64_t));
             // Static salt during test
             int fd;
             fd = open("/dev/random", O_RDONLY);
             if ((fd < 0) ||
-                read(fd, &salt, sizeof(salt)) != sizeof(salt)) {
+                read(fd, (void *)&salt, sizeof(salt)) != sizeof(salt)) {
                 zfs_error_aux(hdl,
                               dgettext(TEXT_DOMAIN,
                                        "failed to open /dev/random"));

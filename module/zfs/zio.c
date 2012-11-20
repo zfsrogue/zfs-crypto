@@ -1063,9 +1063,6 @@ zio_read_bp_init(zio_t *zio)
                                     zio->io_bookmark.zb_objset, bp->blk_birth);
             if (key == NULL) {
                 zio->io_error = ENOKEY;
-#if _KERNEL
-				printk("zio read_bp_init NO KEY error\n");
-#endif
                 return (ZIO_PIPELINE_CONTINUE);
             }
 #if _KERNEL
