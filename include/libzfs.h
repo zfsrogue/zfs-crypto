@@ -405,7 +405,7 @@ typedef enum {
 } zfs_crypto_zckey_t;
 
 extern int zfs_crypto_zckey(libzfs_handle_t *, zfs_crypto_zckey_t,
-                            nvlist_t *, struct zfs_cmd *);
+                            nvlist_t *, struct zfs_cmd *, zfs_type_t);
 extern int zfs_crypto_rename_check(zfs_handle_t *, struct zfs_cmd *);
 extern boolean_t zfs_valid_keysource(char *);
 extern boolean_t zfs_valid_set_keysource_change(zfs_handle_t *, char *, char *);
