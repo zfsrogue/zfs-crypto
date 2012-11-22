@@ -1237,14 +1237,6 @@ badlabel:
             if (intval == ZIO_CRYPT_OFF)
                 break;
 
-            if (type == ZFS_TYPE_VOLUME) {
-                zfs_error_aux(hdl,
-                              dgettext(TEXT_DOMAIN, "encryption "
-                                       "is currently not supported on volumes"));
-                (void) zfs_error(hdl,
-                                 EZFS_PROPREADONLY, errbuf);
-                goto error;
-            }
             /*
              * Since encryption is on, we must make sure the user
              * did not specify a checksum so we can set it to
@@ -3228,7 +3220,7 @@ zfs_create(libzfs_handle_t *hdl, const char *path, zfs_type_t type,
 	}
 
     /* zfs_crypto_create may update props */
-    if (zfs_crypto_zckey(hdl, ZFS_CRYPTO_CREATE, props, &zc) != 0)
+    if (zfs_crypto_zckey(hdl, ZFS_CRYPTO_CREATE, props, &zc, type) != 0)
         return (-1);
 
 	if (props && zcmd_write_src_nvlist(hdl, &zc, props) != 0)
@@ -3493,7 +3485,7 @@ zfs_clone(zfs_handle_t *zhp, const char *target, nvlist_t *props)
 	(void) strlcpy(zc.zc_value, zhp->zfs_name, sizeof (zc.zc_value));
 
     /* may update props */
-    if (zfs_crypto_zckey(zhp->zfs_hdl, ZFS_CRYPTO_CLONE, props, &zc) != 0) {
+    if (zfs_crypto_zckey(zhp->zfs_hdl, ZFS_CRYPTO_CLONE, props, &zc, type) != 0) {
         nvlist_free(props);
         return (-1);
     }

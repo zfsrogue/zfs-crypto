@@ -3002,9 +3002,6 @@ zfs_get_crypto_ctx(zfs_cmd_t *zc, dsl_crypto_ctx_t *dcc)
      * set via the zvol_preallocate_init() path.
      */
 
-    if (zc->zc_crypto.zic_crypt == ZIO_CRYPT_AES_128_CTR) {
-        return (ENOTSUP);
-    }
     switch (zc->zc_crypto.zic_cmd) {
     case ZFS_IOC_CRYPTO_KEY_LOAD:
         error = zcrypt_key_from_ioc(&zc->zc_crypto,
@@ -3606,8 +3603,15 @@ zfs_check_settable(const char *dsname, nvpair_t *pair, cred_t *cr)
         if (zfs_earlier_version(dsname, SPA_VERSION_CRYPTO))
             return (ENOTSUP);
 
-        if (zpl_earlier_version(dsname, ZPL_VERSION_SA))
-            return (ENOTSUP);
+        /*
+         * This property needs to be allowed when we are creating a volume.
+         * Find a solution for this.
+         */
+
+        /*
+          if (zpl_earlier_version(dsname, ZPL_VERSION_SA))
+          return (ENOTSUP);
+        */
 
         if (zfs_is_bootfs(dsname) && !BOOTFS_CRYPT_VALID(intval))
             return (ERANGE);
