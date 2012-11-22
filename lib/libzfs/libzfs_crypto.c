@@ -1342,7 +1342,7 @@ zfs_valid_keysource(char *keysource)
  */
 int
 zfs_crypto_zckey(libzfs_handle_t *hdl, zfs_crypto_zckey_t cmd,
-    nvlist_t *props, zfs_cmd_t *zc)
+                 nvlist_t *props, zfs_cmd_t *zc, zfs_type_t type)
 {
 	uint64_t crypt = ZIO_CRYPT_INHERIT, pcrypt = ZIO_CRYPT_DEFAULT;
 	char *keysource = NULL;
@@ -1470,6 +1470,15 @@ zfs_crypto_zckey(libzfs_handle_t *hdl, zfs_crypto_zckey_t cmd,
 		ret = 0;
 		goto out;
 	}
+
+    /*
+     * If we are creating a volume, pick the valid cipher
+     */
+    /* If encryption is on, and volume, change it to valid cipher. */
+    if ((type == ZFS_TYPE_VOLUME) && (crypt != ZIO_CRYPT_OFF)) {
+        crypt = ZIO_CRYPT_AES_128_CTR;
+    }
+
 
 	/*
 	 * Need to pass down the inherited crypt value so that
