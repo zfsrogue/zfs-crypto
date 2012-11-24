@@ -6335,8 +6335,6 @@ zfs_key_callback(zfs_handle_t *zhp, int depth, void *data)
         return (0);
     }
 
-    fprintf(stderr, "zfs_key_callback\r\n");
-
     switch (cb->keycmd) {
     case KEY_LOAD:
         ret = zfs_key_load(zhp, B_TRUE, B_TRUE, cb->recurse);
