@@ -47,6 +47,7 @@ AC_DEFUN([ZFS_AC_CONFIG_KERNEL], [
 	ZFS_AC_KERNEL_SHOW_OPTIONS
 	ZFS_AC_KERNEL_FSYNC
 	ZFS_AC_KERNEL_EVICT_INODE
+	ZFS_AC_KERNEL_DIRTY_INODE_WITH_FLAGS
 	ZFS_AC_KERNEL_NR_CACHED_OBJECTS
 	ZFS_AC_KERNEL_FREE_CACHED_OBJECTS
 	ZFS_AC_KERNEL_FALLOCATE
@@ -146,11 +147,7 @@ AC_DEFUN([ZFS_AC_KERNEL], [
 		AS_IF([test -n "$sourcelink" && test -e ${sourcelink}], [
 			kernelsrc=`readlink -f ${sourcelink}`
 		], [
-			AC_MSG_RESULT([Not found])
-			AC_MSG_ERROR([
-	*** Please make sure the kernel devel package for your distribution
-	*** is installed then try again.  If that fails you can specify the
-	*** location of the kernel source with the '--with-linux=PATH' option.])
+			kernelsrc="[Not found]"
 		])
 	], [
 		AS_IF([test "$kernelsrc" = "NONE"], [
@@ -159,6 +156,13 @@ AC_DEFUN([ZFS_AC_KERNEL], [
 	])
 
 	AC_MSG_RESULT([$kernelsrc])
+	AS_IF([test ! -d "$kernelsrc"], [
+		AC_MSG_ERROR([
+	*** Please make sure the kernel devel package for your distribution
+	*** is installed then try again.  If that fails you can specify the
+	*** location of the kernel source with the '--with-linux=PATH' option.])
+	])
+
 	AC_MSG_CHECKING([kernel build directory])
 	AS_IF([test -z "$kernelbuild"], [
 		AS_IF([test -e "/lib/modules/$(uname -r)/build"], [
