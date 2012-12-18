@@ -1,6 +1,8 @@
 
 Welcome to the unofficial zfs-crypto branch.
 
+This is the experimental 'features-flags' branch.
+
 To make it clear, this branch has nothing to do with Sun, Oracle,
 ZFSOnLinux, OpenSolaris, IllumOS, OpenIndiana, SmartOS, FreeBSD etc.
 
@@ -36,12 +38,18 @@ Currently it is the authentication MAC that appears to differ.
 
 * Removed KEY methods "https URI" (requires curl) and pkcs11 types.
 
-* Undo the POOL VERSION=30, put it back to 28, and make CRYPTO be a
-  "Named Extension" instead. ZFS On Linux currently does not support
-  "feature@" properties.
+* The pool version is now 5000, and added feature flag
+  "feature@encryption".
+
+* feature@encryption goes active if any ZFS are created with encryption=on.
+
+* Allow for readonly import of active feature@encryption, so that the non-
+  encrypted filesystems could be recovered.
 
 
 Example:
+
+```
 
 # zfs create -o encryption=aes-256-gcm mypool/BOOM
   Enter passphrase for 'mypool/BOOM':
@@ -52,5 +60,11 @@ Example:
   mypool        142K   984M    31K  /mypool
   mypool/BOOM    31K   984M    31K  /mypool/BOOM
 
+# zpool get all mypool
+
+mypool  feature@async_destroy  enabled                local
+mypool  feature@encryption     active                 local
+
+```
 
 zfs/rogue
