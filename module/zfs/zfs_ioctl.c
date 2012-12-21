@@ -18,6 +18,7 @@
  *
  * CDDL HEADER END
  */
+
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Portions Copyright 2011 Martin Matuska
@@ -74,6 +75,7 @@
 #include <sys/dmu_objset.h>
 #include <sys/dsl_crypto.h>
 #include <sys/fm/util.h>
+#include <sys/zfeature.h>
 
 #include <linux/miscdevice.h>
 
@@ -1156,6 +1158,8 @@ get_zfs_sb(const char *dsname, zfs_sb_t **zsbp)
 /*
  * Find a zfs_sb_t for a mounted filesystem, or create our own, in which
  * case its z_sb will be NULL, and it will be opened as the owner.
+ * If 'writer' is set, the z_teardown_lock will be held for RW_WRITER,
+ * which prevents all inode ops from running.
  */
 static int
 zfs_sb_hold(const char *name, void *tag, zfs_sb_t **zsbp, boolean_t writer)
@@ -1224,7 +1228,7 @@ zfs_ioc_pool_create(zfs_cmd_t *zc)
 
 		(void) nvlist_lookup_uint64(props,
 		    zpool_prop_to_name(ZPOOL_PROP_VERSION), &version);
-		if (version < SPA_VERSION_INITIAL || version > SPA_VERSION) {
+		if (!SPA_VERSION_IS_SUPPORTED(version)) {
 			error = EINVAL;
 			goto pool_props_bad;
 		}
@@ -1351,6 +1355,15 @@ zfs_ioc_pool_configs(zfs_cmd_t *zc)
 	return (error);
 }
 
+/*
+ * inputs:
+ * zc_name		name of the pool
+ *
+ * outputs:
+ * zc_cookie		real errno
+ * zc_nvlist_dst	config nvlist
+ * zc_nvlist_dst_size	size of config nvlist
+ */
 static int
 zfs_ioc_pool_stats(zfs_cmd_t *zc)
 {
@@ -1444,22 +1457,84 @@ zfs_ioc_pool_freeze(zfs_cmd_t *zc)
 }
 
 static int
+zfs_feature_encryption(spa_t *spa, uint64_t dsobj,
+                       const char *dsname, void *arg)
+{
+	dsl_dataset_t *ds;
+	uint64_t crypt;
+	int error;
+	dmu_tx_t *tx;
+	objset_t *os;
+
+	if ((error = dsl_dataset_hold(dsname, FTAG, &ds)) != 0)
+		return (error);
+
+	rw_enter(&ds->ds_dir->dd_pool->dp_config_rwlock, RW_READER);
+	error = dsl_prop_get_ds(ds, zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
+                            8, 1, &crypt, NULL/*, DSL_PROP_GET_EFFECTIVE*/);
+	rw_exit(&ds->ds_dir->dd_pool->dp_config_rwlock);
+
+	if ((error == 0) &&
+        (crypt != ZIO_CRYPT_OFF)) {
+
+        if (!dmu_objset_from_ds(ds, &os)) {
+
+            tx = dmu_tx_create(os);
+            dmu_tx_hold_zap(tx, ZVOL_ZAP_OBJ, TRUE, NULL);
+            error = dmu_tx_assign(tx, TXG_WAIT);
+            if (!error) {
+
+                if (!spa_feature_is_enabled(spa,
+                                            &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
+                    spa_feature_enable(spa,
+                                       &spa_feature_table[SPA_FEATURE_ENCRYPTION],
+                                       tx);
+                }
+                spa_feature_incr(spa,
+                                 &spa_feature_table[SPA_FEATURE_ENCRYPTION],
+                                 tx);
+                dmu_tx_commit(tx);
+
+                printk("feature@encryption active on '%s'\n", dsname);
+            }
+        } // os
+    }
+
+
+    dsl_dataset_rele(ds, FTAG);
+	return (0);
+}
+
+static int
 zfs_ioc_pool_upgrade(zfs_cmd_t *zc)
 {
 	spa_t *spa;
 	int error;
+    uint64_t version;
 
 	if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
 		return (error);
 
-	if (zc->zc_cookie < spa_version(spa) || zc->zc_cookie > SPA_VERSION) {
+    version = spa_version(spa);
+
+	if (zc->zc_cookie < spa_version(spa) ||
+	    !SPA_VERSION_IS_SUPPORTED(zc->zc_cookie)) {
 		spa_close(spa, FTAG);
 		return (EINVAL);
 	}
 
 	spa_upgrade(spa, zc->zc_cookie);
-	spa_close(spa, FTAG);
 
+    if (version == SPA_VERSION_30) {
+        printk("Converting pool version=encryption to feature@encryption\n");
+        VERIFY(0 == dmu_objset_find_spa(spa,
+                                        NULL,
+                                        zfs_feature_encryption,
+                                        NULL,
+                                        DS_FIND_CHILDREN | DS_FIND_SNAPSHOTS));
+    }
+
+	spa_close(spa, FTAG);
 	return (error);
 }
 
@@ -2993,7 +3068,7 @@ zfs_get_crypto_ctx(zfs_cmd_t *zc, dsl_crypto_ctx_t *dcc)
     zcrypt_key_t *wkey;
 
     if (zc->zc_crypto.zic_cmd != 0 &&
-        zfs_earlier_version(zc->zc_name, SPA_VERSION_CRYPTO))
+        zfs_earlier_version(zc->zc_name, SPA_VERSION_FEATURES))
         return (ENOTSUP);
 
     /*
@@ -3600,7 +3675,7 @@ zfs_check_settable(const char *dsname, nvpair_t *pair, cred_t *cr)
 		break;
 
     case ZFS_PROP_ENCRYPTION:
-        if (zfs_earlier_version(dsname, SPA_VERSION_CRYPTO))
+        if (zfs_earlier_version(dsname, SPA_VERSION_FEATURES))
             return (ENOTSUP);
 
         /*
@@ -3608,10 +3683,8 @@ zfs_check_settable(const char *dsname, nvpair_t *pair, cred_t *cr)
          * Find a solution for this.
          */
 
-        /*
-          if (zpl_earlier_version(dsname, ZPL_VERSION_SA))
-          return (ENOTSUP);
-        */
+        /*if (zpl_earlier_version(dsname, ZPL_VERSION_SA))
+          return (ENOTSUP);*/
 
         if (zfs_is_bootfs(dsname) && !BOOTFS_CRYPT_VALID(intval))
             return (ERANGE);
@@ -4118,7 +4191,7 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 		return (EBADF);
 	}
 
-    if (zc->zc_nvlist_conf != NULL &&
+    if ((zc->zc_nvlist_conf != NULL) &&
         (error = get_nvlist(zc->zc_nvlist_conf, zc->zc_nvlist_conf_size,
                             zc->zc_iflags, &cmdprops)) != 0)
         goto out;
@@ -4856,7 +4929,8 @@ zfs_ioc_crypto_key_load(zfs_cmd_t *zc)
     if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
         return (error);
 
-    if (spa_version(spa) < SPA_VERSION_CRYPTO) {
+    if (!spa_feature_is_enabled(spa,
+                                &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
         spa_close(spa, FTAG);
         return (ENOTSUP);
     }
@@ -4890,7 +4964,8 @@ zfs_ioc_crypto_key_inherit(zfs_cmd_t *zc)
     if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
         return (error);
 
-    if (spa_version(spa) < SPA_VERSION_CRYPTO) {
+    if (!spa_feature_is_enabled(spa,
+                                &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
         spa_close(spa, FTAG);
         return (ENOTSUP);
     }
@@ -4911,7 +4986,8 @@ zfs_ioc_crypto_key_unload(zfs_cmd_t *zc)
     if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
         return (error);
 
-    if (spa_version(spa) < SPA_VERSION_CRYPTO) {
+    if (!spa_feature_is_enabled(spa,
+                                &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
         spa_close(spa, FTAG);
         return (ENOTSUP);
     }
@@ -4938,7 +5014,8 @@ zfs_ioc_crypto_key_new(zfs_cmd_t *zc)
     if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
         return (error);
 
-    if (spa_version(spa) < SPA_VERSION_CRYPTO) {
+    if (!spa_feature_is_enabled(spa,
+                                &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
         spa_close(spa, FTAG);
         return (ENOTSUP);
     }
@@ -4960,7 +5037,8 @@ zfs_ioc_crypto_key_change(zfs_cmd_t *zc)
     if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
         return (error);
 
-    if (spa_version(spa) < SPA_VERSION_CRYPTO) {
+    if (!spa_feature_is_enabled(spa,
+                                &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
         spa_close(spa, FTAG);
         return (ENOTSUP);
     }
