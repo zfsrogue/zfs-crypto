@@ -1457,13 +1457,65 @@ zfs_ioc_pool_freeze(zfs_cmd_t *zc)
 }
 
 static int
+zfs_feature_encryption(spa_t *spa, uint64_t dsobj,
+                       const char *dsname, void *arg)
+{
+	dsl_dataset_t *ds;
+	uint64_t crypt;
+	int error;
+	dmu_tx_t *tx;
+	objset_t *os;
+
+	if ((error = dsl_dataset_hold(dsname, FTAG, &ds)) != 0)
+		return (error);
+
+	rw_enter(&ds->ds_dir->dd_pool->dp_config_rwlock, RW_READER);
+	error = dsl_prop_get_ds(ds, zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
+                            8, 1, &crypt, NULL/*, DSL_PROP_GET_EFFECTIVE*/);
+	rw_exit(&ds->ds_dir->dd_pool->dp_config_rwlock);
+
+	if ((error == 0) &&
+        (crypt != ZIO_CRYPT_OFF)) {
+
+        if (!dmu_objset_from_ds(ds, &os)) {
+
+            tx = dmu_tx_create(os);
+            dmu_tx_hold_zap(tx, ZVOL_ZAP_OBJ, TRUE, NULL);
+            error = dmu_tx_assign(tx, TXG_WAIT);
+            if (!error) {
+
+                if (!spa_feature_is_enabled(spa,
+                                            &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
+                    spa_feature_enable(spa,
+                                       &spa_feature_table[SPA_FEATURE_ENCRYPTION],
+                                       tx);
+                }
+                spa_feature_incr(spa,
+                                 &spa_feature_table[SPA_FEATURE_ENCRYPTION],
+                                 tx);
+                dmu_tx_commit(tx);
+
+                printk("feature@encryption active on '%s'\n", dsname);
+            }
+        } // os
+    }
+
+
+    dsl_dataset_rele(ds, FTAG);
+	return (0);
+}
+
+static int
 zfs_ioc_pool_upgrade(zfs_cmd_t *zc)
 {
 	spa_t *spa;
 	int error;
+    uint64_t version;
 
 	if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
 		return (error);
+
+    version = spa_version(spa);
 
 	if (zc->zc_cookie < spa_version(spa) ||
 	    !SPA_VERSION_IS_SUPPORTED(zc->zc_cookie)) {
@@ -1472,8 +1524,17 @@ zfs_ioc_pool_upgrade(zfs_cmd_t *zc)
 	}
 
 	spa_upgrade(spa, zc->zc_cookie);
-	spa_close(spa, FTAG);
 
+    if (version == SPA_VERSION_30) {
+        printk("Converting pool version=encryption to feature@encryption\n");
+        VERIFY(0 == dmu_objset_find_spa(spa,
+                                        NULL,
+                                        zfs_feature_encryption,
+                                        NULL,
+                                        DS_FIND_CHILDREN | DS_FIND_SNAPSHOTS));
+    }
+
+	spa_close(spa, FTAG);
 	return (error);
 }
 

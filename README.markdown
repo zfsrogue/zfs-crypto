@@ -1,7 +1,17 @@
 
 Welcome to the unofficial zfs-crypto branch.
 
-This is the experimental 'features-flags' branch.
+This is the experimental 'features-flags' branch, with
+special pool upgrade additions.
+
+If you run a legacy pool version=30, this branch will let you
+import and upgrade your pool to the standard pool version=5000,
+and it will set feature@encryption for any filesystem using
+encryption.
+
+It is to aid those who happen to use zfs-crypto with pool version=30
+for the short window that it was available. Before the feature@
+pool version became standard.
 
 To make it clear, this branch has nothing to do with Sun, Oracle,
 ZFSOnLinux, OpenSolaris, IllumOS, OpenIndiana, SmartOS, FreeBSD etc.
