@@ -217,17 +217,17 @@ struct spa {
 	uint64_t	spa_dspace;		/* dspace in normal class */
 	kmutex_t	spa_vdev_top_lock;	/* dueling offline/remove */
 	kmutex_t	spa_proc_lock;		/* protects spa_proc* */
-	kcondvar_t	spa_proc_cv;		/* spa_proc_state transitions */
+	kcondvar_t	spa_proc_cv;		/* spa_proc_state transitions*/
 	spa_proc_state_t spa_proc_state;	/* see definition */
 	proc_t		*spa_proc;		/* "zpool-poolname" process */
 	uint64_t	spa_did;		/* if procp != p0, did of t1 */
 	boolean_t	spa_autoreplace;	/* autoreplace set in open */
 	int		spa_vdev_locks;		/* locks grabbed */
 	uint64_t	spa_creation_version;	/* version at pool creation */
-    zcrypt_keystore_t *spa_keystore;        /* Crypto keystore */
-	uint64_t	spa_prev_software_version; /* See ub_software_version */
+        zcrypt_keystore_t *spa_keystore;        /* Crypto keystore */
+	uint64_t	spa_prev_software_version; /*See ub_software_version */
 	uint64_t	spa_feat_for_write_obj;	/* required to write to pool */
-	uint64_t	spa_feat_for_read_obj;	/* required to read from pool */
+	uint64_t	spa_feat_for_read_obj;	/* required to read from pool*/
 	uint64_t	spa_feat_desc_obj;	/* Feature descriptions */
 	/*
 	 * spa_refcnt & spa_config_lock must be the last elements

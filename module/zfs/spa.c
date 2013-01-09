@@ -695,9 +695,9 @@ static int
 spa_change_guid_check(void *arg1, void *arg2, dmu_tx_t *tx)
 {
 	spa_t *spa = arg1;
-	ASSERTV(uint64_t *newguid = arg2);
 	vdev_t *rvd = spa->spa_root_vdev;
 	uint64_t vdev_state;
+	ASSERTV(uint64_t *newguid = arg2);
 
 	spa_config_enter(spa, SCL_STATE, FTAG, RW_READER);
 	vdev_state = rvd->vdev_state;

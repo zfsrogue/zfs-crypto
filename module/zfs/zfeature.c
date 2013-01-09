@@ -229,7 +229,12 @@ feature_get_refcount(objset_t *os, uint64_t read_obj, uint64_t write_obj,
 	uint64_t refcount;
 	uint64_t zapobj = feature->fi_can_readonly ? write_obj : read_obj;
 
-	ASSERT(0 != zapobj);
+	/*
+	 * If the pool is currently being created, the feature objects may not
+	 * have been allocated yet.  Act as though all features are disabled.
+	 */
+	if (zapobj == 0)
+		return (ENOTSUP);
 
 	err = zap_lookup(os, zapobj, feature->fi_guid, sizeof (uint64_t), 1,
 	    &refcount);
@@ -398,7 +403,7 @@ boolean_t
 spa_feature_is_enabled(spa_t *spa, zfeature_info_t *feature)
 {
 	int err;
-	uint64_t refcount;
+	uint64_t refcount = 0;
 
 	if (spa_version(spa) < SPA_VERSION_FEATURES)
 		return (B_FALSE);
@@ -414,7 +419,7 @@ boolean_t
 spa_feature_is_active(spa_t *spa, zfeature_info_t *feature)
 {
 	int err;
-	uint64_t refcount;
+	uint64_t refcount = 0;
 
 	if (spa_version(spa) < SPA_VERSION_FEATURES)
 		return (B_FALSE);

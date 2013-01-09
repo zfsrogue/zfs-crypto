@@ -184,8 +184,9 @@ typedef enum dmu_object_type {
 	DMU_OT_DSL_CLONES,		/* ZAP */
 	DMU_OT_BPOBJ_SUBOBJ,		/* UINT64 */
 
-    // FIXME
-    DMU_OT_DSL_KEYCHAIN,            /* ZAP */
+	// FIXME
+	DMU_OT_DSL_KEYCHAIN,            /* ZAP */
+
 	/*
 	 * Do not allocate new object types here. Doing so makes the on-disk
 	 * format incompatible with any other format that uses the same object
@@ -317,6 +318,7 @@ typedef void dmu_buf_evict_func_t(struct dmu_buf *db, void *user_ptr);
 #define	DMU_POOL_SCAN			"scan"
 #define	DMU_POOL_FREE_BPOBJ		"free_bpobj"
 #define	DMU_POOL_BPTREE_OBJ		"bptree_obj"
+#define	DMU_POOL_EMPTY_BPOBJ		"empty_bpobj"
 
 /*
  * Allocate an object from this objset.  The range of object numbers

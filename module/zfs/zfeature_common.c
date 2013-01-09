@@ -160,4 +160,7 @@ zpool_feature_init(void)
 	zfeature_register(SPA_FEATURE_ENCRYPTION,
 	    "com.sun:encryption", "encryption",
 	    "ZFS Encryption.", B_TRUE, B_FALSE, NULL);
+	zfeature_register(SPA_FEATURE_EMPTY_BPOBJ,
+	    "com.delphix:empty_bpobj", "empty_bpobj",
+	    "Snapshots use less space.", B_TRUE, B_FALSE, NULL);
 }

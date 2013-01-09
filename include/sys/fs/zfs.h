@@ -366,7 +366,6 @@ typedef enum {
 #define	SPA_VERSION_28			28ULL
 #define	SPA_VERSION_5000		5000ULL
 
-
 /*
  * When bumping up SPA_VERSION, make sure GRUB ZFS understands the on-disk
  * format change. Go to usr/src/grub/grub-0.97/stage2/{zfs-include/, fsys_zfs*},
@@ -966,8 +965,8 @@ typedef enum history_internal_events {
 	LOG_DS_USER_HOLD,
 	LOG_DS_USER_RELEASE,
 	LOG_POOL_SPLIT,
-    LOG_DS_CRYPTO_KEY_CREATE,
-    LOG_DS_CRYPTO_KEY_CHANGE,
+	LOG_DS_CRYPTO_KEY_CREATE,
+	LOG_DS_CRYPTO_KEY_CHANGE,
 	LOG_POOL_GUID_CHANGE,
 	LOG_END
 } history_internal_events_t;

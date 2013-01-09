@@ -1910,14 +1910,14 @@ dsl_dataset_destroy_sync(void *arg1, void *tag, dmu_tx_t *tx)
 
 		VERIFY3U(0, ==, dmu_objset_from_ds(ds, &os));
 
-        if ((os->os_crypt != ZIO_CRYPT_OFF) &&
-            spa_feature_is_enabled(dp->dp_spa,
-                                   &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
-            spa_feature_decr(dp->dp_spa,
-                             &spa_feature_table[SPA_FEATURE_ENCRYPTION],
-                             tx);
-        }
-
+		if ((os->os_crypt != ZIO_CRYPT_OFF) &&
+		    spa_feature_is_enabled(dp->dp_spa,
+			      &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
+		  spa_feature_decr(dp->dp_spa,
+				   &spa_feature_table[SPA_FEATURE_ENCRYPTION],
+				   tx);
+		}
+		
 		if (!spa_feature_is_enabled(dp->dp_spa, async_destroy)) {
 			err = old_synchronous_dataset_destroy(ds, tx);
 		} else {
