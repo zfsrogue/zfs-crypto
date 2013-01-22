@@ -14,7 +14,7 @@ AM_CCASFLAGS = \
 noinst_LTLIBRARIES = libspl.la
 
 libspl_la_SOURCES = \
-	$(top_srcdir)/lib/libspl/aes.c \
+	$(top_srcdir)/lib/libspl/sha1.c \
 	$(top_srcdir)/lib/libspl/crypto.c \
 	$(top_srcdir)/lib/libspl/getexecname.c \
 	$(top_srcdir)/lib/libspl/gethrtime.c \

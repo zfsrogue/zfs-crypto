@@ -661,7 +661,7 @@ dsl_crypto_key_change_sync(void *arg1, void *arg2, dmu_tx_t *tx)
 	    zap_cursor_retrieve(&zc, &za) == 0;
 	    zap_cursor_advance(&zc)) {
 		wkeylen = za.za_num_integers;
-		wkeybuf = kmem_alloc(wkeylen, KM_SLEEP);
+		wkeybuf = kmem_alloc(wkeylen, KM_PUSHPAGE);
 		VERIFY(zap_lookup_uint64(mos, keychain_zapobj,
 		    (uint64_t *)za.za_name, 1, 1, wkeylen, wkeybuf) == 0);
 		VERIFY(zcrypt_unwrap_key(ca->ca_old_key,
@@ -875,7 +875,7 @@ dsl_keychain_load_dd(dsl_dir_t *dd, uint64_t dsobj,
 	    zap_cursor_advance(&zc)) {
 		entries++;
 		wkeylen = za.za_num_integers;
-		wrappedkey = kmem_alloc(wkeylen, KM_SLEEP);
+		wrappedkey = kmem_alloc(wkeylen, KM_PUSHPAGE);
 		VERIFY3U(zap_lookup_uint64(mos, keychain_zapobj,
 		    (uint64_t *)&za.za_name, 1, 1,
 		    za.za_num_integers, wrappedkey), ==, 0);
