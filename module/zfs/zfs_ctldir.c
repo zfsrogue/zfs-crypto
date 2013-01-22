@@ -197,6 +197,7 @@ zfsctl_inode_alloc(zfs_sb_t *zsb, uint64_t id,
 	zp->z_is_mapped = B_FALSE;
 	zp->z_is_ctldir = B_TRUE;
 	zp->z_is_sa = B_FALSE;
+	zp->z_is_stale = B_FALSE;
 	ip->i_ino = id;
 	ip->i_mode = (S_IFDIR | S_IRUGO | S_IXUGO);
 	ip->i_uid = 0;
@@ -685,7 +686,7 @@ zfsctl_snapdir_inactive(struct inode *ip)
 	"exec 0</dev/null " \
 	"     1>/dev/null " \
 	"     2>/dev/null; " \
-	"umount -t zfs -n '%s%s'"
+	"umount -t zfs -n %s'%s'"
 
 static int
 __zfsctl_unmount_snapshot(zfs_snapentry_t *sep, int flags)
@@ -696,7 +697,7 @@ __zfsctl_unmount_snapshot(zfs_snapentry_t *sep, int flags)
 
 	argv[2] = kmem_asprintf(SET_UNMOUNT_CMD,
 	    flags & MNT_FORCE ? "-f " : "", sep->se_path);
-	error = call_usermodehelper(argv[0], argv, envp, 1);
+	error = call_usermodehelper(argv[0], argv, envp, UMH_WAIT_PROC);
 	strfree(argv[2]);
 
 	/*
@@ -822,7 +823,7 @@ zfsctl_mount_snapshot(struct path *path, int flags)
 	 * to safely abort the automount.  This should be very rare.
 	 */
 	argv[2] = kmem_asprintf(SET_MOUNT_CMD, full_name, full_path);
-	error = call_usermodehelper(argv[0], argv, envp, 1);
+	error = call_usermodehelper(argv[0], argv, envp, UMH_WAIT_PROC);
 	strfree(argv[2]);
 	if (error) {
 		printk("ZFS: Unable to automount %s at %s: %d\n",

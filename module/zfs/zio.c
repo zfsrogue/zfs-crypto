@@ -1461,6 +1461,7 @@ __zio_execute(zio_t *zio)
 			return;
 		}
 
+#ifdef _KERNEL
 		/*
 		 * If we executing in the context of the tx_sync_thread,
 		 * or we are performing pool initialization outside of a
@@ -1473,6 +1474,7 @@ __zio_execute(zio_t *zio)
 			zio_taskq_dispatch(zio, ZIO_TASKQ_ISSUE, cut);
 			return;
 		}
+#endif
 
 		zio->io_stage = stage;
 		rv = zio_pipeline[highbit(stage) - 1](zio);
