@@ -25,26 +25,23 @@ The crypto/api/ header files are from OpenSolaris.
 The crypto/api implementation is brand new, and supports "bare
 minimum" features as needed by ZFS only.
 
-Current support is in BETA. Real ciphers are used, but key generation
-function could do with more work. It is NOT compatible with Solaris pools.
-Currently it is the authentication MAC that appears to differ.
+Current support is in BETA.
+
+Importing a Solaris pool can be done using:
+ Solaris: zpool create -o version=30 -O version=5 thepool $devices...
+ Solaris: zfs create -o encryption=aes-256-ccm thepool/secure
+ Linux: zpool import -N thepool
+ Linux: zpool upgrade thepool
+ Linux: zfs mount thepool/secure
+
 
 * MACs are in use, but compute_mac() is empty, not called?
-
-* Key needs to be CK_AES prepared, better than current
 
 * All "// FIXME" should be inspected. In particular, known areas
   which differ are PROP_ALIAS, PROP_INHERIT, crypto vs userquota,
 
 * Removed KEY methods "https URI" (requires curl) and pkcs11 types.
 
-* The pool version is now 5000, and added feature flag
-  "feature@encryption".
-
-* feature@encryption goes active if any ZFS are created with encryption=on.
-
-* Allow for readonly import of active feature@encryption, so that the non-
-  encrypted filesystems could be recovered.
 
 
 Example:
