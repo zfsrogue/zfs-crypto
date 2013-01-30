@@ -101,7 +101,7 @@ zcrypt_key_copy(zcrypt_key_t *src)
 
 	rklen = src->zk_key.ck_length / 8;
 	if (rklen != 0) {
-		dst->zk_key.ck_data = kmem_alloc(rklen, KM_SLEEP);
+		dst->zk_key.ck_data = kmem_alloc(rklen, KM_PUSHPAGE);
 		bcopy(src->zk_key.ck_data, dst->zk_key.ck_data, rklen);
 		dst->zk_key.ck_format = src->zk_key.ck_format;
 		dst->zk_key.ck_length = src->zk_key.ck_length;
@@ -109,7 +109,7 @@ zcrypt_key_copy(zcrypt_key_t *src)
 
 	rklen = src->zk_mackey.ck_length / 8;
 	if (rklen != 0) {
-		dst->zk_mackey.ck_data = kmem_alloc(rklen, KM_SLEEP);
+		dst->zk_mackey.ck_data = kmem_alloc(rklen, KM_PUSHPAGE);
 		bcopy(src->zk_mackey.ck_data, dst->zk_mackey.ck_data, rklen);
 		dst->zk_mackey.ck_format = src->zk_mackey.ck_format;
 		dst->zk_mackey.ck_length = src->zk_mackey.ck_length;
@@ -343,7 +343,7 @@ zcrypt_unwrap_key(zcrypt_key_t *wk, uint64_t crypt,
 
 	if (wcrypt == ZIO_CRYPT_WRAP_AES_CCM) {
 		CK_AES_CCM_PARAMS *ccmp;
-		ccmp = kmem_zalloc(sizeof (CK_AES_CCM_PARAMS), KM_SLEEP);
+		ccmp = kmem_zalloc(sizeof (CK_AES_CCM_PARAMS), KM_PUSHPAGE);
 		ccmp->ulNonceSize = zio_crypt_wrap_table[wcrypt].cwi_ivlen;
 		ccmp->nonce = (uchar_t *)wkeyphys->zkp_kiv;
 		ccmp->ulMACSize = zio_crypt_wrap_table[wcrypt].cwi_maclen;
@@ -352,7 +352,7 @@ zcrypt_unwrap_key(zcrypt_key_t *wk, uint64_t crypt,
 		wmech.cm_param_len = sizeof (CK_AES_CCM_PARAMS);
 	} else if (wcrypt == ZIO_CRYPT_WRAP_AES_GCM) {
 		CK_AES_GCM_PARAMS *gcmp;
-		gcmp = kmem_zalloc(sizeof (CK_AES_GCM_PARAMS), KM_SLEEP);
+		gcmp = kmem_zalloc(sizeof (CK_AES_GCM_PARAMS), KM_PUSHPAGE);
 		gcmp->ulIvLen = zio_crypt_wrap_table[wcrypt].cwi_ivlen;
 		gcmp->pIv = (uchar_t *)wkeyphys->zkp_kiv;
 		gcmp->ulTagBits = zio_crypt_wrap_table[wcrypt].cwi_maclen * 8;
@@ -363,7 +363,7 @@ zcrypt_unwrap_key(zcrypt_key_t *wk, uint64_t crypt,
 	}
 
 	uwrapkeylen = keylen + zio_crypt_wrap_table[wcrypt].cwi_maclen;
-	uwrapkey = kmem_zalloc(uwrapkeylen, KM_SLEEP);
+	uwrapkey = kmem_zalloc(uwrapkeylen, KM_PUSHPAGE);
 
 	SET_CRYPTO_DATA(ptkey_cdt, uwrapkey, uwrapkeylen);
 	SET_CRYPTO_DATA(wkey_cdt, (char *)wkeyphys->zkp_key,
@@ -380,7 +380,7 @@ zcrypt_unwrap_key(zcrypt_key_t *wk, uint64_t crypt,
 
 	tmpzck = zcrypt_key_allocate();
 	tmpzck->zk_key.ck_format = CRYPTO_KEY_RAW;
-	tmpzck->zk_key.ck_data = kmem_alloc(keylen, KM_SLEEP);
+	tmpzck->zk_key.ck_data = kmem_alloc(keylen, KM_PUSHPAGE);
 	tmpzck->zk_key.ck_length = keylen * 8;
 	tmpzck->zk_crypt = crypt;
 	bcopy(uwrapkey, tmpzck->zk_key.ck_data, keylen);
@@ -390,7 +390,7 @@ zcrypt_unwrap_key(zcrypt_key_t *wk, uint64_t crypt,
 	keylen = 32;
 	if (wcrypt == ZIO_CRYPT_WRAP_AES_CCM) {
 		CK_AES_CCM_PARAMS *ccmp;
-		ccmp = kmem_zalloc(sizeof (CK_AES_CCM_PARAMS), KM_SLEEP);
+		ccmp = kmem_zalloc(sizeof (CK_AES_CCM_PARAMS), KM_PUSHPAGE);
 		ccmp->ulNonceSize = zio_crypt_wrap_table[wcrypt].cwi_ivlen;
 		ccmp->nonce = (uchar_t *)wkeyphys->zkp_miv;
 		ccmp->ulMACSize = zio_crypt_wrap_table[wcrypt].cwi_maclen;
@@ -399,7 +399,7 @@ zcrypt_unwrap_key(zcrypt_key_t *wk, uint64_t crypt,
 		wmech.cm_param_len = sizeof (CK_AES_CCM_PARAMS);
 	} else if (wcrypt == ZIO_CRYPT_WRAP_AES_GCM) {
 		CK_AES_GCM_PARAMS *gcmp;
-		gcmp = kmem_zalloc(sizeof (CK_AES_GCM_PARAMS), KM_SLEEP);
+		gcmp = kmem_zalloc(sizeof (CK_AES_GCM_PARAMS), KM_PUSHPAGE);
 		gcmp->ulIvLen = zio_crypt_wrap_table[wcrypt].cwi_ivlen;
 		gcmp->pIv = (uchar_t *)wkeyphys->zkp_miv;
 		gcmp->ulTagBits = zio_crypt_wrap_table[wcrypt].cwi_maclen * 8;
@@ -410,7 +410,7 @@ zcrypt_unwrap_key(zcrypt_key_t *wk, uint64_t crypt,
 	}
 
 	uwrapmaclen = keylen + zio_crypt_wrap_table[wcrypt].cwi_maclen;
-	uwrapmac = kmem_zalloc(uwrapmaclen, KM_SLEEP);
+	uwrapmac = kmem_zalloc(uwrapmaclen, KM_PUSHPAGE);
 
 	SET_CRYPTO_DATA(ptkey_cdt, uwrapmac, uwrapmaclen);
 	SET_CRYPTO_DATA(wkey_cdt, (char *)wkeyphys->zkp_mackey,
@@ -427,7 +427,7 @@ zcrypt_unwrap_key(zcrypt_key_t *wk, uint64_t crypt,
 	}
 
 	tmpzck->zk_mackey.ck_format = CRYPTO_KEY_RAW;
-	tmpzck->zk_mackey.ck_data = kmem_alloc(keylen, KM_SLEEP);
+	tmpzck->zk_mackey.ck_data = kmem_alloc(keylen, KM_PUSHPAGE);
 	tmpzck->zk_mackey.ck_length = keylen * 8;
 	bcopy(uwrapmac, tmpzck->zk_mackey.ck_data, keylen);
 	kmem_free(uwrapmac, uwrapmaclen);
