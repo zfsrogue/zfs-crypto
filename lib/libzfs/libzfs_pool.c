@@ -1135,6 +1135,8 @@ zpool_create(libzfs_handle_t *hdl, const char *pool, nvlist_t *nvroot,
 		}
 	}
 
+	(void) strlcpy(zc.zc_name, pool, sizeof (zc.zc_name));
+
 	if (fsprops) {
 		uint64_t zoned;
 		char *zonestr;
@@ -1151,16 +1153,20 @@ zpool_create(libzfs_handle_t *hdl, const char *pool, nvlist_t *nvroot,
 		    (nvlist_alloc(&zc_props, NV_UNIQUE_NAME, 0) != 0)) {
 			goto create_failed;
 		}
-		if (nvlist_add_nvlist(zc_props,
-		    ZPOOL_ROOTFS_PROPS, zc_fsprops) != 0) {
-			goto create_failed;
-		}
 	}
+
+    /* zfs_crypto_create may update zc_fsprops */
+    if (zfs_crypto_zckey(hdl, ZFS_CRYPTO_PCREATE, zc_fsprops, &zc,
+                         ZFS_TYPE_FILESYSTEM) != 0)
+        goto create_failed;
+
+    if (fsprops && nvlist_add_nvlist(zc_props,
+        ZPOOL_ROOTFS_PROPS, zc_fsprops) != 0) {
+        goto create_failed;
+    }
 
 	if (zc_props && zcmd_write_src_nvlist(hdl, &zc, zc_props) != 0)
 		goto create_failed;
-
-	(void) strlcpy(zc.zc_name, pool, sizeof (zc.zc_name));
 
 	if ((ret = zfs_ioctl(hdl, ZFS_IOC_POOL_CREATE, &zc)) != 0) {
 

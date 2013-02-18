@@ -4960,6 +4960,7 @@ zfs_ioc_crypto_key_inherit(zfs_cmd_t *zc)
 {
     spa_t *spa;
     int error;
+    objset_t *os;
 
     if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
         return (error);
@@ -4971,7 +4972,16 @@ zfs_ioc_crypto_key_inherit(zfs_cmd_t *zc)
     }
 
     error = dsl_crypto_key_inherit(zc->zc_name);
+
     spa_close(spa, FTAG);
+
+    if (!dmu_objset_hold(zc->zc_name, FTAG, &os)) {
+        if (dmu_objset_type(os) == DMU_OST_ZVOL) {
+            /* returns EEXISTS if already mounted */
+            zvol_create_minor(zc->zc_name);
+        }
+        dmu_objset_rele(os, FTAG);
+    }
 
     return (error);
 }

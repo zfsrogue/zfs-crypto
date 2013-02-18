@@ -1477,6 +1477,10 @@ zfs_crypto_zckey(libzfs_handle_t *hdl, zfs_crypto_zckey_t cmd,
     /* If encryption is on, and volume, change it to valid cipher. */
     if ((type == ZFS_TYPE_VOLUME) && (crypt != ZIO_CRYPT_OFF)) {
         crypt = ZIO_CRYPT_AES_128_CTR;
+        /* We also have to write out the prop, in the case of inheritance
+           or it will be using the wrong cipher */
+        VERIFY(nvlist_add_uint64(props,
+               zfs_prop_to_name(ZFS_PROP_ENCRYPTION), crypt) == 0);
     }
 
 
