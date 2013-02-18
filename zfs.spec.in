@@ -2,11 +2,8 @@
 %define version          @VERSION@
 %define release          @ZFS_META_RELEASE@
 %define debug_package    %{nil}
-%define _prefix          /
-%define _libexecdir      /usr/libexec
-%define _datadir         /usr/share
-%define _mandir          %{_datadir}/man
-%define _includedir      /usr/include
+%define _sbindir         /sbin
+%define _libdir          /%{_lib}
 %define _udevdir         /lib/udev
 
 Summary:         ZFS Library and Utils
@@ -76,7 +73,6 @@ rm -rf $RPM_BUILD_ROOT
 %files
 %defattr(-, root, root)
 %{_sbindir}/*
-%{_bindir}/*
 %{_libdir}/*
 %{_mandir}/man5/*
 %{_mandir}/man8/*
@@ -84,7 +80,6 @@ rm -rf $RPM_BUILD_ROOT
 
 %config %{_sysconfdir}/init.d/*
 %config %{_sysconfdir}/zfs/*
-%config(noreplace) %{_sysconfdir}/zfs/zdev.conf
 
 %doc AUTHORS COPYING COPYRIGHT DISCLAIMER
 %doc OPENSOLARIS.LICENSE README.markdown ZFS.RELEASE
