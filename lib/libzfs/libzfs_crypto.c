@@ -705,7 +705,7 @@ key_hdl_to_zc(libzfs_handle_t *hdl, zfs_handle_t *zhp, char *keysource,
 				free(keydata);
 				return (-1);
 			}
-
+			tmpkeydatalen = keydatalen;
 		} else {
 			int tries = 0;
 			do {

@@ -309,7 +309,7 @@ get_usage(zfs_help_t idx)
 		    "[snapshot|filesystem]\n"));
     case HELP_KEY:
         return (gettext(
-                        "\tkey -l <-a | [-r] filesystem|volume>\n"
+                        "\tkey -l [-n] <-a | [-r] filesystem|volume>\n"
                         "\tkey -u [-f] <-a | [-r] filesystem|volume>\n"
                         "\tkey -c [ -o <keysource=value>]"
                         " <-a | [-r] filesystem|volume>\n"
@@ -6288,6 +6288,7 @@ typedef struct key_cbdata {
     enum keycmd_e   keycmd;
     boolean_t       force;
     boolean_t       recurse;
+    boolean_t       automount;
     nvlist_t        *props;
 } key_cbdata_t;
 
@@ -6309,7 +6310,7 @@ zfs_key_callback(zfs_handle_t *zhp, int depth, void *data)
 
     switch (cb->keycmd) {
     case KEY_LOAD:
-        ret = zfs_key_load(zhp, B_TRUE, B_TRUE, cb->recurse);
+        ret = zfs_key_load(zhp, cb->automount, B_TRUE, cb->recurse);
         break;
     case KEY_UNLOAD:
         ret = zfs_key_unload(zhp, cb->force);
@@ -6344,7 +6345,7 @@ zfs_do_key(int argc, char **argv)
     zfs_type_t types = ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME;
 
 
-    while ((c = getopt(argc, argv, "arflucKo:")) != -1) {
+    while ((c = getopt(argc, argv, "arflnucKo:")) != -1) {
         switch (c) {
         case 'a':
             all = B_TRUE;
@@ -6362,6 +6363,9 @@ zfs_do_key(int argc, char **argv)
                 usage(B_FALSE);
             cb.keycmd = KEY_LOAD;
             cmdset = B_TRUE;
+            break;
+        case 'n':
+            cb.automount = B_FALSE;
             break;
         case 'u':
             if (cmdset)
