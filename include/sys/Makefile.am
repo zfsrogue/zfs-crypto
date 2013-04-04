@@ -1,4 +1,4 @@
-SUBDIRS = fm fs
+SUBDIRS = fm fs crypto
 
 COMMON_H = \
 	$(top_srcdir)/include/sys/arc.h \
@@ -79,7 +79,10 @@ KERNEL_H = \
 	$(top_srcdir)/include/sys/zfs_ioctl.h \
 	$(top_srcdir)/include/sys/zfs_onexit.h \
 	${top_srcdir}/include/sys/zpl.h \
-	$(top_srcdir)/include/sys/zvol.h
+	$(top_srcdir)/include/sys/zvol.h \
+	$(top_srcdir)/include/sys/dsl_crypto.h \
+	$(top_srcdir)/include/sys/zcrypt.h \
+	$(top_srcdir)/include/sys/zio_crypt.h
 
 USER_H =
 
