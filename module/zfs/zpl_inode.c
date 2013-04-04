@@ -41,6 +41,9 @@ zpl_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
 	struct inode *ip;
 	int error;
 
+	if (dlen(dentry) > ZFS_MAXNAMELEN)
+		return ERR_PTR(-ENAMETOOLONG);
+
 	crhold(cr);
 	error = -zfs_lookup(dir, dname(dentry), &ip, 0, cr, NULL, NULL);
 	ASSERT3S(error, <=, 0);
@@ -396,7 +399,7 @@ static int
 #ifdef HAVE_D_REVALIDATE_NAMEIDATA
 zpl_revalidate(struct dentry *dentry, struct nameidata *nd)
 {
-	unsigned int flags = nd->flags;
+	unsigned int flags = (nd ? nd->flags : 0);
 #else
 zpl_revalidate(struct dentry *dentry, unsigned int flags)
 {

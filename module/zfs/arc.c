@@ -189,6 +189,7 @@ unsigned long zfs_arc_meta_limit = 0;
 int zfs_arc_grow_retry = 0;
 int zfs_arc_shrink_shift = 0;
 int zfs_arc_p_min_shift = 0;
+int zfs_arc_memory_throttle_disable = 1;
 int zfs_disable_dup_eviction = 0;
 int zfs_arc_meta_prune = 0;
 
@@ -2801,10 +2802,10 @@ arc_read_done(zio_t *zio)
 	if (BP_SHOULD_BYTESWAP(zio->io_bp) && zio->io_error == 0) {
 		dmu_object_byteswap_t bswap =
 		    DMU_OT_BYTESWAP(BP_GET_TYPE(zio->io_bp));
-		arc_byteswap_func_t *func = BP_GET_LEVEL(zio->io_bp) > 0 ?
-		    byteswap_uint64_array :
-		    dmu_ot_byteswap[bswap].ob_func;
-		func(buf->b_data, hdr->b_size);
+		if (BP_GET_LEVEL(zio->io_bp) > 0)
+		    byteswap_uint64_array(buf->b_data, hdr->b_size);
+		else
+		    dmu_ot_byteswap[bswap].ob_func(buf->b_data, hdr->b_size);
 	}
 
 	arc_cksum_compute(buf, B_FALSE);
@@ -3632,6 +3633,9 @@ arc_memory_throttle(uint64_t reserve, uint64_t inflight_data, uint64_t txg)
 {
 #ifdef _KERNEL
 	uint64_t available_memory;
+
+	if (zfs_arc_memory_throttle_disable)
+		return (0);
 
 	/* Easily reclaimable memory (free + inactive + arc-evictable) */
 	available_memory = ptob(spl_kmem_availrmem()) + arc_evictable_memory();
@@ -5041,6 +5045,12 @@ MODULE_PARM_DESC(zfs_arc_shrink_shift, "log2(fraction of arc to reclaim)");
 
 module_param(zfs_arc_p_min_shift, int, 0444);
 MODULE_PARM_DESC(zfs_arc_p_min_shift, "arc_c shift to calc min/max arc_p");
+
+module_param(zfs_disable_dup_eviction, int, 0644);
+MODULE_PARM_DESC(zfs_disable_dup_eviction, "disable duplicate buffer eviction");
+
+module_param(zfs_arc_memory_throttle_disable, int, 0644);
+MODULE_PARM_DESC(zfs_arc_memory_throttle_disable, "disable memory throttle");
 
 module_param(l2arc_write_max, ulong, 0444);
 MODULE_PARM_DESC(l2arc_write_max, "Max write bytes per interval");
