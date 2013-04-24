@@ -900,7 +900,7 @@ dmu_recv_begin(char *tofs, char *tosnap, char *top_ds, struct drr_begin *drrb,
 	/* open the dataset we are logically receiving into */
 	err = dsl_dataset_hold(tofs, dmu_recv_tag, &ds);
 	if (err == 0) {
-		if (dmu_recv_verify_features(ds, drrb)) {
+		if (!dmu_recv_verify_features(ds, drrb)) {
 			dsl_dataset_rele(ds, dmu_recv_tag);
 			return (ENOTSUP);
 		}
@@ -951,7 +951,7 @@ dmu_recv_begin(char *tofs, char *tosnap, char *top_ds, struct drr_begin *drrb,
 		if (err)
 			return (err);
 
-		if (dmu_recv_verify_features(ds, drrb)) {
+		if (!dmu_recv_verify_features(ds, drrb)) {
 			dsl_dataset_rele(ds, FTAG);
 			return (ENOTSUP);
 		}
