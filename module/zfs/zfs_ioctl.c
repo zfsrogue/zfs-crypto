@@ -4308,8 +4308,9 @@ zfs_ioc_recv(zfs_cmd_t *zc)
                             zc->zc_iflags, &cmdprops)) != 0)
         goto out;
 
-    if ((error = zfs_get_crypto_ctx(zc, &dcc)) != 0)
+    if ((error = zfs_get_crypto_ctx(zc, &dcc)) != 0) {
         return (error);
+    }
 
 	VERIFY(nvlist_alloc(&errors, NV_UNIQUE_NAME, KM_SLEEP) == 0);
 

@@ -638,8 +638,14 @@ send_iterate_prop(zfs_handle_t *zhp, nvlist_t *nv)
 			 */
 			if (prop == ZPROP_INVAL)
 				continue;
-
-			if (zfs_prop_readonly(prop))
+			/*
+			 * Encryption is setonce so readonly will return
+			 * true, but we need it in the stream to make
+			 * the set of stream props encryption,checksum,keysource
+			 * all consistent.
+			 */
+			if (prop != ZFS_PROP_ENCRYPTION &&
+                zfs_prop_readonly(prop))
 				continue;
 		}
 
@@ -1402,10 +1408,14 @@ zfs_send(zfs_handle_t *zhp, const char *fromsnap, const char *tosnap,
 	}
 
 	if (zhp->zfs_type == ZFS_TYPE_FILESYSTEM) {
-		uint64_t version;
+		uint64_t version, crypt;
 		version = zfs_prop_get_int(zhp, ZFS_PROP_VERSION);
 		if (version >= ZPL_VERSION_SA) {
 			featureflags |= DMU_BACKUP_FEATURE_SA_SPILL;
+		}
+		crypt = zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION);
+		if (crypt != ZIO_CRYPT_OFF) {
+			featureflags |= DMU_BACKUP_FEATURE_ENCRYPT;
 		}
 	}
 
@@ -2559,6 +2569,7 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 			VERIFY(0 == nvlist_add_uint64(props,
 			    zfs_prop_to_name(ZFS_PROP_CANMOUNT), 0));
 		}
+
 		ret = zcmd_write_src_nvlist(hdl, &zc, props);
 		if (err)
 			nvlist_free(props);
@@ -2835,6 +2846,14 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 	zc.zc_begin_record = drr_noswap->drr_u.drr_begin;
 	zc.zc_cookie = infd;
 	zc.zc_guid = flags->force;
+
+    // This will most likely fail for recv VOLUMES.
+    if (!flags->dryrun &&
+        zfs_crypto_zckey(hdl, ZFS_CRYPTO_RECV, NULL, &zc,
+                         ZFS_TYPE_FILESYSTEM) != 0) {
+        return zfs_error(hdl, EZFS_KEYERR, errbuf);
+    }
+
 	if (flags->verbose) {
 		(void) printf("%s %s stream of %s into %s\n",
 		    flags->dryrun ? "would receive" : "receiving",
@@ -2856,7 +2875,6 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 	err = ioctl_err = zfs_ioctl(hdl, ZFS_IOC_RECV, &zc);
 	ioctl_errno = errno;
 	prop_errflags = (zprop_errflags_t)zc.zc_obj;
-
 	if (err == 0) {
 		nvlist_t *prop_errors;
 		VERIFY(0 == nvlist_unpack((void *)(uintptr_t)zc.zc_nvlist_dst,
