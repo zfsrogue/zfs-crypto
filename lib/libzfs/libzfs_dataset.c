@@ -3477,8 +3477,6 @@ zfs_clone(zfs_handle_t *zhp, const char *target, nvlist_t *props)
 			nvlist_free(props);
 			return (-1);
 		}
-
-		nvlist_free(props);
 	}
 
 	(void) strlcpy(zc.zc_name, target, sizeof (zc.zc_name));
