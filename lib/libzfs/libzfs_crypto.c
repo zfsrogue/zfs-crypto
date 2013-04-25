@@ -252,6 +252,7 @@ int crypto_pass2key(unsigned char *keydata, size_t keydatalen,
                     void *salt, size_t saltlen,
                     size_t desired_keylen,
                     void **out_keydata, size_t *out_keylen);
+int pkcs11_read_data(char *filename, void **dbuf, size_t *dlen);
 
 
 /*
@@ -726,7 +727,6 @@ key_hdl_to_zc(libzfs_handle_t *hdl, zfs_handle_t *zhp, char *keysource,
 		 * Note that pkcs11_read_data allocates memory with malloc
 		 * that we need to free.
 		 */
-#if 0 // FIXME
 		keydatalen = keylen;
 		ret = pkcs11_read_data(&(uri[7]),
 		    (void **)&keydata, &keydatalen);
@@ -736,7 +736,6 @@ key_hdl_to_zc(libzfs_handle_t *hdl, zfs_handle_t *zhp, char *keysource,
 			errno = ret;
 			return (-1);
 		}
-#endif
 		break;
 
 	case KEY_LOCATOR_PKCS11_URI:
