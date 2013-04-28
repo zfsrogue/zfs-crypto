@@ -50,7 +50,7 @@
 #include <libgen.h>
 #include <sys/fs/zfs.h>
 #include <sys/zio_crypt.h>
-//#include <curl/curl.h>
+#include <curl/curl.h>
 
 #include "zfs_namecheck.h"
 #include "zfs_prop.h"
@@ -149,6 +149,7 @@ parse_locator(key_locator_t *locator, char *s, int len, char **uri)
 		*uri = s;
 		return (B_TRUE);
 	}
+#endif
 
 	if ((len > strlen(LOC_HTTPS) &&
 	    (strncmp(LOC_HTTPS, s, strlen(LOC_HTTPS)) == 0)) ||
@@ -158,7 +159,6 @@ parse_locator(key_locator_t *locator, char *s, int len, char **uri)
 		*uri = s;
 		return (B_TRUE);
 	}
-#endif
 
 	return (B_FALSE);
 }
@@ -619,6 +619,7 @@ out:
 	ASSERT(errno != 0);
 	return (-1);
 }
+#endif
 
 struct cb_arg_curl {
 	libzfs_handle_t	*cb_hdl;
@@ -642,7 +643,6 @@ get_keydata_curl(void *ptr, size_t size, size_t nmemb, void *arg)
 
 	return (datalen);
 }
-#endif
 
 static int
 key_hdl_to_zc(libzfs_handle_t *hdl, zfs_handle_t *zhp, char *keysource,
@@ -660,7 +660,7 @@ key_hdl_to_zc(libzfs_handle_t *hdl, zfs_handle_t *zhp, char *keysource,
 	char *tmpkeydata = NULL;
 	size_t tmpkeydatalen = 0;
 	uint64_t salt;
-	//struct cb_arg_curl cb_curl = { 0 };
+	struct cb_arg_curl cb_curl = { 0 };
 
 	zc->zc_crypto.zic_clone_newkey = hdl->libzfs_crypt.zc_clone_newkey;
 
@@ -758,7 +758,6 @@ key_hdl_to_zc(libzfs_handle_t *hdl, zfs_handle_t *zhp, char *keysource,
 #endif
 		break;
 	case KEY_LOCATOR_HTTPS_URI: {
-#if 0
 		CURL *curl_hdl = curl_easy_init();
 		CURLcode cerr;
 
@@ -794,7 +793,6 @@ curl_fail:
 		keydatalen = cb_curl.cb_keydatalen;
 
 		curl_easy_cleanup(curl_hdl);
-#endif
 		break;
 
         case KEY_LOCATOR_NONE: // Avoid Warning
