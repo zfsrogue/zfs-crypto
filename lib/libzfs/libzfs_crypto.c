@@ -821,6 +821,9 @@ format_key:
 		bcopy(keydata, zc->zc_crypto.zic_keydata, keydatalen);
 		zc->zc_crypto.zic_keydatalen = keydatalen;
 		zc->zc_crypto.zic_salt = 0;
+
+		tmpkeydata = strdup(keydata);
+		tmpkeydatalen = keydatalen;
 		break;
 	case KEY_FORMAT_HEX:
 		/*
