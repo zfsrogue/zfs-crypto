@@ -1,0 +1,832 @@
+'\" te
+.\" Copyright (c) 2005, 2011, Oracle and/or its affiliates. All rights reserved.
+.TH zfs_encrypt 1 "Apr 30, 2013" "ZFS pool 28, filesystem 5" "System Administration Commands"
+.SH NAME
+zfs_encrypt \- encrypting ZFS file systems
+.SH SYNOPSIS
+.LP
+.nf
+\fBzfs\fR [\fB-?\fR]
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBhelp\fR \fIsubcommand\fR | help | \fIproperty\fR \fIproperty-name\fR | \fIpermission\fR
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBcreate\fR \fB-o encryption=on\fR  [\fB-o keysource\fR=\fIraw\fR | \fIhex\fR | \fIpassphrase\fR,\fIprompt\fR | \fIfile://|pkcs11:|http://|https://\fR] ... \fIdataset\fR
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBclone\fR [\fB-p\fR] [\fB-K\fR] [\fB-o\fR \fIproperty\fR=\fIvalue\fR] ... \fIsnapshot\fR \fIfilesystem\fR|\fIvolume\fR
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBget\fR [\fB-r\fR|\fB-d\fR \fIdepth\fR][\fB-Hp\fR][\fB-o\fR all | \fIfield\fR[,...]] [\fB-s\fR \fIsource\fR[,...]]
+     all | \fIproperty\fR[,...] \fIfilesystem\fR|\fIvolume\fR|\fIsnapshot\fR ...
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBkey\fR \fB-l\fR | {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBkey\fR \fB-u\fR [\fB-f\fR] {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBkey\fR \fB-c\fR [\fB-o\fR \fIkeysource\fR=\fIvalue\fR] {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBkey\fR \fB-K\fR {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBmount\fR 
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBmount\fR [\fB-vO\fR] [\fB-o \fIoptions\fR\fR] \fB-a\fR | \fIfilesystem\fR
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBunmount\fR [\fB-f\fR] \fB-a\fR | \fIfilesystem\fR|\fImountpoint\fR
+.fi
+
+.SH DESCRIPTION
+.sp
+.LP
+The \fBzfs create -o encryption\fR command encrypts a newly created \fBZFS\fR datasets within a \fBZFS\fR storage pool, as described in \fBzpool\fR(8). 
+.SS "Encryption"
+.sp
+.LP
+Encryption is the process in which data is encoded for privacy and a key is needed by the data owner to access the encoded data. You can set an encryption policy when a ZFS dataset is created, but the policy cannot be changed. See the \fBencryption\fR and \fBkeysource\fR property descriptions in the "Native Properties" section for details.
+.sp
+.LP
+Dataset encryption is inherited permanently and cannot be removed during dataset cloning. When receiving a replicated dataset stream, the destination dataset must have encryption enabled if encryption is desired. Otherwise, the data is stored as clear text. A fully replicated stream of an encrypted dataset results in an encrypted dataset but under a newly generated key, but the steam itself is not encrypted.
+.SS "Native ZFS Encryption Properties"
+.sp
+.LP
+The following native properties related to ZFS encryption consist of read-only statistics about the dataset. These properties cannot be set nor inherited. Native properties apply to all dataset types unless otherwise noted. For a full description and list of ZFS native properties, see \fBzfs\fR(8).
+.sp
+.ne 2
+.mk
+.na
+\fB\fBkeystatus\fR\fR
+.ad
+.sp .6
+.RS 4n
+Identifies the encryption key status for the dataset. The availability of a dataset's key is indicated by showing the status of \fBavailable\fR or \fBunavailable\fR. For datasets that do not have encryption enabled, \fBnone\fR is displayed.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBmounted\fR\fR
+.ad
+.sp .6
+.RS 4n
+For file systems, indicates whether the file system is currently mounted. This property can be either \fByes\fR or \fBno\fR.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBrekeydate\fR\fR
+.ad
+.sp .6
+.RS 4n
+The date of the last data encryption key change from a \fBzfs key\fR \fB-K\fR or \fBzfs clone\fR \fB-K\fR operation on this dataset. If no rekey operation has been performed, \fBrekeydate\fR is the same as \fBcreation\fR date.
+.RE
+
+.sp
+.LP
+The following properties cannot be changed after the file system is created and, therefore, should be set when the file system is created. If the properties are not set with the \fBzfs create\fR or \fBzpool create\fR commands, these properties are inherited from the parent dataset. If the parent dataset lacks these properties due to having been created prior to these features being supported, the new file system will have the default values for these properties.
+.sp
+.ne 2
+.mk
+.na
+\fB\fBencryption\fR=\fBoff\fR | \fBon\fR | \fBaes-128-ccm\fR | \fBaes-192-ccm\fR | \fBaes-256-ccm\fR | \fBaes-128-gcm\fR | \fBaes-192-gcm\fR | \fBaes-256-gcm\fR\fR
+.ad
+.sp .6
+.RS 4n
+Defines the encryption algorithm and key length that is used for the encrypted dataset. The \fBon\fR value is equal to \fBaes-128-ccm\fR. The default value is \fBoff\fR. When encryption is set to a value other than \fBoff\fR, the \fBchecksum\fR property is set to \fBsha256+mac\fR and becomes \fBreadonly\fR.
+.RE
+
+.sp
+.LP
+The following properties must be specified at creation time and can modified by using special commands:
+.sp
+.ne 2
+.mk
+.na
+\fB\fBkeysource\fR=\fIraw\fR | \fIhex\fR | \fIpassphrase\fR,\fIprompt\fR | \fIfile://\fR\fB|pkcs11:|https://\fR\fR
+.ad
+.sp .6
+.RS 4n
+Defines the format and location of the key that wraps the dataset keys. The key must be present when the dataset is created, mounted, or loaded by using the \fBzfs key\fR \fB-l\fR command.
+.sp
+The \fBkeysource\fR property accepts two values: \fBformat\fR determines how the key is presented; \fBlocator\fR identifies where the key is coming from.
+.sp
+\fBformat\fR accepts three values:
+.RS +4
+.TP
+.ie t \(bu
+.el o
+\fIraw\fR: the raw key bytes
+.RE
+.RS +4
+.TP
+.ie t \(bu
+.el o
+\fIhex\fR: a hexadecimal key string
+.RE
+.RS +4
+.TP
+.ie t \(bu
+.el o
+\fIpassphrase\fR: a character string that generates a key
+.RE
+\fBlocator\fR accepts two values:
+.RS +4
+.TP
+.ie t \(bu
+.el o
+\fBprompt\fR: You are prompted for a key when the dataset is created or mounted
+.RE
+.RS +4
+.TP
+.ie t \(bu
+.el o
+\fBfile:///\fR\fIfilename\fR: the key file location in a file system
+.RE
+.RS +4
+.TP
+.ie t \(bu
+.el o
+\fBpkcs11\fR: A URI describing the location of a key in a PKCS#11 token
+.RE
+.RS +4
+.TP
+.ie t \(bu
+.el o
+\fBhttps://\fR\fIlocation\fR: The key file location on a secure server
+.RE
+See "Examples" for examples of creating a key by using the \fBhttps://\fR locator.
+.sp
+To change the wrapping key value or the key, you must run the \fBzfs key\fR \fB-c\fR command. If only the key location needs to be changed, for example, a filename change, then use the \fBzfs set\fR command with the \fBkeysource\fR property. Note that no checking is performed by ZFS when only the key location is changed with the \fBzfs set\fR command, such as whether the new location has a valid wrapping key.
+.sp
+If \fBkeysource\fR is not specified and not inherited, then the default \fBkeysource\fR is set to \fBpassphrase\fR,\fBprompt\fR for a dataset that has encryption on and is set to \fBnone\fR for a dataset that has encryption off.
+.RE
+
+.SH SUBCOMMANDS
+.sp
+.LP
+All subcommands that modify state are logged persistently to the pool in their original form.
+.sp
+.ne 2
+.mk
+.na
+\fB\fBzfs ?\fR\fR
+.ad
+.sp .6
+.RS 4n
+Displays a help message.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBzfs help\fR \fIcommand\fR | help | \fIproperty\fR \fIproperty-name\fR | \fIpermission\fR\fR
+.ad
+.sp .6
+.RS 4n
+Displays \fBzfs\fR command usage information. You can display help for a specific command, property, or delegated permission. If you display help for a specific command or property, the command syntax or property value is displayed. Using \fBzfs help\fR without any arguments displays a complete list of \fBzfs\fR commands.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBzfs create\fR [\fB-p\fR] [\fB-o\fR \fIencryption\fR=\fIon\fR] [\fB-o keysource\fR=\fIraw\fR | \fIhex\fR | \fIpassphrase\fR,\fIprompt\fR | \fIfile://\fR\fB|pkcs11:|https://\fR] ... \fIfilesystem\fR\fR
+.ad
+.sp .6
+.RS 4n
+Creates a new \fBZFS\fR file system with encryption enabled, which uses \fBaes-128-ccm\fR See the encryption property description for a list of supported encryption algorithms.
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-p\fR\fR
+.ad
+.sp .6
+.RS 4n
+Creates all the non-existing parent datasets. Datasets created in this manner are automatically mounted according to the \fBmountpoint\fR property inherited from their parent. Any property specified on the command line using the \fB-o\fR option is ignored. If the target filesystem already exists, the operation completes successfully.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-o\fR \fIencryption\fR=\fIvalue\fR\fR
+.ad
+.sp .6
+.RS 4n
+Sets the encryption property to \fIvalue\fR. Multiple \fB-o\fR options can be specified. An error results if the same property is specified in multiple \fB-o\fR options.
+.RE
+
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBzfs clone\fR [\fB-p\fR] [\fB-K\fR] [\fB-o\fR \fIproperty\fR=\fIvalue\fR] ... \fIsnapshot\fR \fIfilesystem\fR|\fIvolume\fR\fR
+.ad
+.sp .6
+.RS 4n
+Creates a clone of the given snapshot. See the "Clones" section for details. The target dataset can be located anywhere in the \fBZFS\fR hierarchy, and is created as the same type as the original.
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-p\fR\fR
+.ad
+.sp .6
+.RS 4n
+Creates all the non-existing parent datasets. Datasets created in this manner are automatically mounted according to the \fBmountpoint\fR property inherited from their parent. If the target filesystem or volume already exists, the operation completes successfully.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-o\fR \fIproperty\fR=\fIvalue\fR\fR
+.ad
+.sp .6
+.RS 4n
+Sets the specified property; see \fBzfs create\fR for details.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-K\fR\fR
+.ad
+.sp .6
+.RS 4n
+Creates a new data encryption key in the keychain for this dataset. Data written in the clone uses the new data encryption key, which is distinct from its original snapshot. 
+.RE
+
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBzfs set\fR \fBkeysource=\fR\fIvalue\fR \fIfilesystem\fR|\fIvolume\fR| ...\fR
+.ad
+.sp .6
+.RS 4n
+Sets the \fBkeysource\fR property to the given value for each dataset. You can only change the \fBkeysource\fR location. If you want to change the wrapping key value, use the \fBzfs key\fR \fB-c\fR command.
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-r\fR\fR
+.ad
+.sp .6
+.RS 4n
+Recursively apply the effective value of the setting throughout the subtree of child datasets. The effective value may be set or inherited, depending on the property.
+.RE
+
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBzfs get\fR encryption | keysource | keystatus | rekeydate \fIfilesystem\fR|\fIvolume\fR| ...\fR
+.ad
+.sp .6
+.RS 4n
+Displays properties for the given datasets. 
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-r\fR\fR
+.ad
+.sp .6
+.RS 4n
+Recursively display properties for any children.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-d\fR \fIdepth\fR\fR
+.ad
+.sp .6
+.RS 4n
+Recursively display any children of the dataset, limiting the recursion to \fIdepth\fR. A depth of \fB1\fR will display only the dataset and its direct children.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-H\fR\fR
+.ad
+.sp .6
+.RS 4n
+Display output in a form more easily parsed by scripts. Any headers are omitted, and fields are explicitly separated by a single tab instead of an arbitrary amount of space.
+.RE
+
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBzfs\fR \fBkey\fR\fB-l\fR | {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}\fR
+.ad
+.sp .6
+.RS 4n
+Loads the encryption key for a dataset and any datasets that inherit the key. The key that is provided with this command is not the actual key that is used to encrypt the dataset. It is a wrapping key for the set of data encryption keys for the dataset.
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-l\fR\fR
+.ad
+.sp .6
+.RS 4n
+Loads the wrapping key to unlock the encrypted dataset and datasets that inherit the key. This command loads the key based on what is defined by the dataset's \fBkeysource\fR property.
+.sp
+During a pool import, a key load operation is performed when a dataset is mounted. During boot, if the wrapping key is available and the \fBkeysource\fR is not set to \fBprompt\fR, the key load operation is performed.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-a\fR\fR
+.ad
+.sp .6
+.RS 4n
+Apply to all datasets in all pools on the system.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-r\fR\fR
+.ad
+.sp .6
+.RS 4n
+Apply the operation recursively to all datasets below the named file system or volume.
+.RE
+
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBzfs\fR \fBkey\fR\fB-u\fR [\fB-f\fR] | {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}\fR
+.ad
+.sp .6
+.RS 4n
+Unloads the encryption key for a dataset and any datasets that inherit the key. 
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-u\fR\fR
+.ad
+.sp .6
+.RS 4n
+Unmounts the dataset and then attempts to unload the wrapping key for an encrypted dataset and datasets that inherit the key. If successful, the dataset is not accessible and is unmounted.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-f\fR\fR
+.ad
+.sp .6
+.RS 4n
+Attempts to force unmount the dataset before attempting to unload the key. If not specified, a normal unmount is attempted.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-a\fR\fR
+.ad
+.sp .6
+.RS 4n
+Apply to all datasets in all pools on the system.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-r\fR\fR
+.ad
+.sp .6
+.RS 4n
+Apply the operation recursively to all datasets below the named file system or volume.
+.RE
+
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBzfs\fR \fBkey\fR\fB-c\fR [\fB-o\fR \fBkeysource=\fR\fIvalue\fR] | {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}\fR
+.ad
+.sp .6
+.RS 4n
+Changes the wrapping key. If the new key has a different format or locator, the \fBkeysource\fR property must be included as part of the command. Only the \fBkeysource\fR property can be changed as part of the \fBzfs key\fR \fB-c\fR command.
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-c\fR\fR
+.ad
+.sp .6
+.RS 4n
+Changes the wrapping key for the key of an encrypted dataset and the datasets that inherit it. The existing key must already have been loaded before the key change operation can occur. ZFS does not prompt you for the existing passphrase.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-o\fR \fIproperty=value\fR\fR
+.ad
+.sp .6
+.RS 4n
+Property to be changed as part of the key change operation. The \fBkeysource\fR property is the only option that can be changed as part of a key change operation.
+.sp
+You must have permission to change the \fBkeysource\fR properties.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-a\fR\fR
+.ad
+.sp .6
+.RS 4n
+Apply to all datasets in all pools on the system.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-r\fR\fR
+.ad
+.sp .6
+.RS 4n
+Apply the operation recursively to all datasets below the named file system or volume.
+.RE
+
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBzfs\fR \fBkey\fR\fB-K\fR {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}\fR
+.ad
+.sp .6
+.RS 4n
+Creates a new data encryption key.  The new data encryption key is wrapped by the same wrapping key as any existing data encryption keys for this dataset.
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-K\fR\fR
+.ad
+.sp .6
+.RS 4n
+Creates a new data encryption key for this dataset. Data written after this operation will use the new data encryption key.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-a\fR\fR
+.ad
+.sp .6
+.RS 4n
+Apply to all datasets in all pools on the system.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB-r\fR\fR
+.ad
+.sp .6
+.RS 4n
+Apply the operation recursively to all datasets below the named file system or volume.
+.RE
+
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBzfs mount\fR\fR
+.ad
+.br
+.na
+\fB\fBzfs mount\fR [\fB-vO\fR] [\fB-o\fR \fIoptions\fR] \fB-a\fR | \fIfilesystem\fR\fR
+.ad
+.sp .6
+.RS 4n
+Mounts \fBZFS\fR file systems. Invoked automatically as part of the boot process. For a full description of \fBzfs mount\fR syntax, see \fBzfs\fR(8).
+.sp
+.ne 2
+.mk
+.na
+\fB\fIfilesystem\fR\fR
+.ad
+.sp .6
+.RS 4n
+Mount the specified filesystem.
+.sp
+A \fBzfs mount\fR operation of an encrypted dataset might prompt you for a key, depending on the \fBkeysource\fR property value. This might occur, for example, if the \fBkeysource\fR locator is set to \fBprompt\fR.
+.RE
+
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBzfs unmount\fR [\fB-f\fR] \fB-a\fR | \fIfilesystem\fR|\fImountpoint\fR\fR
+.ad
+.sp .6
+.RS 4n
+Unmounts currently mounted \fBZFS\fR file systems. Invoked automatically as part of the shutdown process. For a full description of \fBzfs unmount\fR syntax, see \fBzfs\fR(8).
+.sp
+.ne 2
+.mk
+.na
+\fB\fIfilesystem\fR|\fImountpoint\fR\fR
+.ad
+.sp .6
+.RS 4n
+Unmount the specified filesystem. The command can also be given a path to a \fBZFS\fR file system mount point on the system.
+.sp
+For an encrypted dataset, the key is not unloaded when the file system is unmounted. To unload the key, see \fBzfs key\fR.
+.RE
+
+.RE
+
+.SH EXAMPLES
+.sp
+.LP
+\fBNOTE: pktool is not availible on Linux. What command to use to create a keyfile is currently unknown!\fR
+.sp
+.LP
+\fBNOTE: Currently pkcs11: does not work on Linux.\fR
+.LP
+\fBExample 1 \fRCreating an Encrypted Dataset
+.sp
+.LP
+The following example shows how to create an encrypted dataset by using a \fBpassphrase\fR prompt, which is the default value of the \fBkeysource\fR property. This example assumes that the \fBtank/home\fR dataset is not encrypted.
+
+.sp
+.in +2
+.nf
+# \fBzfs create -o encryption=on tank/home/bob\fR
+Enter passphrase for 'tank/home/bob/': \fB**********\fR
+Enter again: \fB**********\fR
+.fi
+.in -2
+.sp
+
+.sp
+.LP
+In the following example, the \fBpktool\fR(1) command is used to generate a raw key to a file. Next, an encrypted dataset (\fBtank/home/anne\fR) is created with the \fBaes-256-ccm\fR algorithm and the raw key file that was generated by \fBpktool\fR.
+
+.sp
+.in +2
+.nf
+# \fBpktool genkey keystore=file outkey=/media/stick/mykey keytype=aes keylen=256\fR
+# \fBzfs create encryption=aes-256-ccm -o keysource=raw,file:///rmdisk/stick/mykey tank/home/anne\fR
+.fi
+.in -2
+.sp
+
+.sp
+.LP
+This example shows how to create an encrypted ZFS file system that prompts for a key that is stored at an \fBhttp\fR location.
+
+.sp
+.in +2
+.nf
+# \fBzfs create -o encryption=on -o keysource=passphrase,https://keys.example.com/keys/42 tank/home/fs1\fR
+.fi
+.in -2
+.sp
+
+.sp
+.LP
+This example shows how to generate a raw key in a PKCS#11 token. Then, an encrypted dataset is created with the raw PKCS#11 key that was generated from \fBpktool\fR.
+
+.sp
+.in +2
+.nf
+# \fBpktool genkey keystore=pkcs11 keytype=aes keylen=128 label=fs2\fR
+Enter PIN for Sun Software PKCS#11 softtoken: \fBxxxxx\fR
+# \fBzfs create -o encryption=on -o keysource=raw,pkcs11:object=fs2 tank/home/fs2\fR
+Enter PKCS#11 token PIN for 'tank/home/fs2': \fBxxxxx\fR
+.fi
+.in -2
+.sp
+
+.sp
+.LP
+This example shows how to generate a raw key in a KMS token. Then, an encrypted dataset is created with the raw KMS key that was generated from \fBpktool\fR.
+
+.sp
+.in +2
+.nf
+# \fBpktool genkey keystore=pkcs11 keytype=aes keylen=256 token=KMS label=fs3\fR
+Enter PIN for KMS: \fBxxxxx\fR
+# \fBzfs create -o encryption=aes-256-ccm -o keysource="raw,pkcs11:token=KMS;object=fs3" tank/home/fs3\fR
+Enter 'KMS' PKCS#11 token PIN for 'tank/home/fs3': \fBxxxxx\fR
+.fi
+.in -2
+.sp
+
+.LP
+\fBExample 2 \fRCreating an Encrypted Dataset with a Different Encryption Algorithm
+.sp
+.LP
+In this example, any \fBtank/home\fR datasets inherit the \fBkeysource\fR properties, but the \fBtank/home/bob\fR dataset is created using a different encryption algorithm.
+
+.sp
+.in +2
+.nf
+# \fBzpool create tank ....\fR
+# \fBzfs create -o encryption=on tank/home\fR
+# \fBzfs get keystatus tank/home\fR
+NAME       PROPERTY   VALUE        SOURCE
+tank/home  keystatus  available    -
+
+# \fBzfs create -o encryption=aes-256-ccm tank/home/bob\fR
+.fi
+.in -2
+.sp
+
+.LP
+\fBExample 3 \fRInheriting Encryption and Keysource Properties
+.sp
+.LP
+In this example, all of the \fBtank/home\fR datasets inherit the \fBencryption\fR and \fBkeysource\fR properties.
+
+.sp
+.in +2
+.nf
+# \fBzpool create -o encryption=on -o keysource=raw,file:///... tank ...\fR
+# \fBzfs create tank/home\fR
+.fi
+.in -2
+.sp
+
+.LP
+\fBExample 4 \fRChanging an Encrypted Dataset's Wrapping Key and Keysource
+.sp
+.LP
+This example shows how to change a dataset's wrapping key to a new key defined by the dataset's \fBkeysource\fR property.
+
+.sp
+.in +2
+.nf
+# \fBzfs get keysource tank/home/bob\fR
+NAME  PROPERTY         VALUE                    SOURCE
+tank  keysource        raw,file:///etc/keyfile  default
+
+# \fBzfs key -c -o keysource=passphrase,prompt  tank/home/bob\fR
+Enter passphrase for 'tank/home/bob/': \fB**********\fR
+Enter again: \fB**********\fR
+.fi
+.in -2
+.sp
+
+.sp
+.LP
+The following example shows how to change the \fBhttp\fR location of dataset's wrapping key.
+
+.sp
+.in +2
+.nf
+# \fBzfs get keysource tank/home/bob\fR
+NAME           PROPERTY   VALUE              SOURCE
+tank/home/bob  keysource  passphrase,prompt  local
+
+# \fBzfs set keysource=passphrase,https://internal.example.com/keys/bob/zfs \\fR
+\fBtank/home/bob\fR
+.fi
+.in -2
+.sp
+
+.sp
+.LP
+You must have the delegated \fBkey\fR and \fBkeychange\fR permissions to change the \fBkeysource\fR property.
+
+.LP
+\fBExample 5 \fRRekeying the Dataset's Encryption Key
+.sp
+.LP
+This example shows how to change a dataset's encryption key, which is neither visible nor managed by you or an administrator. The dataset's encryption key is wrapped (encrypted) by the key specified in the \fBkeysource\fR property.
+
+.sp
+.in +2
+.nf
+# \fBzfs key -K tank/project42\fR
+# \fBzfs get rekeydate,creation tank/project42\fR
+.fi
+.in -2
+.sp
+
+.sp
+.LP
+You must have the delegated \fBkeychange\fR permission to perform a key change operation.
+
+.SH EXIT STATUS
+.sp
+.LP
+The following exit values are returned:
+.sp
+.ne 2
+.mk
+.na
+\fB\fB0\fR\fR
+.ad
+.sp .6
+.RS 4n
+Successful completion. 
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB1\fR\fR
+.ad
+.sp .6
+.RS 4n
+An error occurred.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fB2\fR\fR
+.ad
+.sp .6
+.RS 4n
+Invalid command line options were specified.
+.RE
+
+.SH SEE ALSO
+.sp
+.LP
+\fBchmod\fR(1), \fBchown\fR(1), \fBssh\fR(1), \fBmount\fR(8), \fBzfs\fR(8), \fBzpool\fR(8), \fBchmod\fR(1), \fBchown\fR(1), \fBstat\fR(1), \fBwrite\fR(1)
