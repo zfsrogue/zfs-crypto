@@ -243,6 +243,26 @@ zfs \- configures ZFS file systems
 .nf
 \fBzfs\fR \fBdiff\fR [\fB-FHt\fR] \fIsnapshot\fR \fIsnapshot|filesystem\fR
 
+.LP
+.nf
+\fBzfs\fR \fBkey\fR \fB-l\fR {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBkey\fR \fB-u\fR [\fB-f\fR] {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBkey\fR \fB-c\fR [\fB-o\fR \fIkeysource\fR=\fIvalue\fR] {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}
+.fi
+
+.LP
+.nf
+\fBzfs\fR \fBkey\fR \fB-K\fR {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}
+.fi
+
 .SH DESCRIPTION
 .sp
 .LP
@@ -344,6 +364,10 @@ If needed, \fBZFS\fR file systems can also be managed with traditional tools (\f
 .sp
 .LP
 Deduplication is the process for removing redundant data at the block-level, reducing the total amount of data stored. If a file system has the \fBdedup\fR property enabled, duplicate data blocks are removed synchronously.  The result is that only unique data is stored and common components are shared among files.
+.SS "Encryption"
+.sp
+.LP
+For a full description of ZFS encryption and the ZFS encryption syntax, see \fBzfs_encrypt\fR(1).
 .SS "Native Properties"
 .sp
 .LP
@@ -719,13 +743,15 @@ This property is not inherited.
 .ne 2
 .mk
 .na
-\fB\fBchecksum\fR=\fBon\fR | \fBoff\fR | \fBfletcher2,\fR| \fBfletcher4\fR | \fBsha256\fR\fR
+\fB\fBchecksum\fR=\fBon\fR | \fBoff\fR | \fBfletcher2,\fR| \fBfletcher4\fR | \fBsha256\fR | \fBsha256+mac\fR\fR
 .ad
 .sp .6
 .RS 4n
 Controls the checksum used to verify data integrity. The default value is \fBon\fR, which automatically selects an appropriate algorithm (currently, \fBfletcher2\fR, but this may change in future releases). The value \fBoff\fR disables integrity checking on user data. Disabling checksums is \fBNOT\fR a recommended practice.
 .sp
 Changing this property affects only newly-written data.
+.sp
+The value of \fBsha256+mac\fR is only available when encryption is enabled. The checksum property becomes \fBreadonly\fR when encryption is enabled, and then is always set to \fBsha256+mac\fR.
 .RE
 
 .sp
@@ -764,6 +790,8 @@ This property can also be referred to by its shortened column name \fBcompress\f
 Controls the number of copies of data stored for this dataset. These copies are in addition to any redundancy provided by the pool, for example, mirroring or RAID-Z. The copies are stored on different disks, if possible. The space used by multiple copies is charged to the associated file and dataset, changing the \fBused\fR property and counting against quotas and reservations.
 .sp
 Changing this property only affects newly-written data. Therefore, set this property at file system creation time by using the \fB-o\fR \fBcopies=\fR\fIN\fR option.
+.sp
+When encryption is enabled on a dataset, copies can be set to a maximum of \fB2\fR.
 .RE
 
 .sp
@@ -1233,6 +1261,31 @@ Indicates whether the file system should reject file names that include characte
 .RE
 
 .sp
+.ne 2
+.mk
+.na
+\fB\fBencryption\fR=\fBoff\fR | \fBon\fR | \fBaes-128-ccm\fR | \fBaes-192-ccm\fR | \fBaes-256-ccm\fR | \fBaes-128-gcm\fR | \fBaes-192-gcm\fR | \fBaes-256-gcm\fR\fR
+.ad
+.sp .6
+.RS 4n
+For more information, see \fBzfs_encrypt\fR(1).
+.RE
+
+.sp
+.LP
+The following property must be specified at creation time and can modified by using special commands:
+.sp
+.ne 2
+.mk
+.na
+\fB\fBkeysource\fR=\fIraw\fR | \fIhex\fR | \fIpassphrase\fR,\fIprompt\fR | \fIfile\fR\fR
+.ad
+.sp .6
+.RS 4n
+For more information, see \fBzfs_encrypt\fR(1).
+.RE
+
+.sp
 .LP
 The \fBcasesensitivity\fR, \fBnormalization\fR, and \fButf8only\fR properties are also new permissions that can be assigned to non-privileged users by using the \fBZFS\fR delegated administration feature.
 .SS "Temporary Mount Point Properties"
@@ -1275,6 +1328,9 @@ The values of user properties are arbitrary strings, are always inherited, and a
 with the \fBzfs create\fR command set up and enable the swap area using the
 \fBmkswap\fR(8) and \fBswapon\fR(8) commands.  Do not swap to a file on a
 \fBZFS\fR file system. A \fBZFS\fR swap file configuration is not supported.
+.sp
+.LP
+You can encrypt a ZFS volume used as a swap device by specifying the \fBencryption\fR property for that device and specifying the \fBencrypted\fR option in \fBvfstab\fR(4). For more information about the encryption property, see \fBzfs_encrypt\fR(1).
 .SH SUBCOMMANDS
 .sp
 .LP
@@ -2918,6 +2974,29 @@ Give more parseable tab-separated output, without header lines and without arrow
 Display the path's inode change time as the first column of output.
 .RE
 
+.sp
+.ne 2
+.mk
+.na
+\fB\fBzfs key\fR \fB-l\fR | {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}\fR
+.ad
+.br
+.na
+\fB\fBzfs key\fR \fB-u\fR [\fB-f\fR] | {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR\fR
+.ad
+.br
+.na
+\fB\fBzfs key\fR \fB-c\fR [\fB-o\fR \fIkeysource\fR=\fIvalue\fR] {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}\fR
+.ad
+.br
+.na
+\fB\fBzfs key\fR \fB-K\fR {\fB-a\fR | [\fB-r\fR] \fIfilesystem\fR|\fIvolume\fR}\fR
+.ad
+.sp .6
+.RS 4n
+For a full description of the \fBzfs key\fR syntax and examples, see \fBzfs_encrypt\fR(1).
+.RE
+
 .SH EXAMPLES
 .LP
 \fBExample 1 \fRCreating a ZFS File System Hierarchy
@@ -3458,4 +3537,4 @@ Invalid command line options were specified.
 .SH SEE ALSO
 .sp
 .LP
-\fBchmod\fR(2), \fBfsync\fR(2), \fBgzip\fR(1), \fBmount\fR(8), \fBssh\fR(1), \fBstat\fR(2), \fBwrite\fR(2), \fBzpool\fR(8)
+\fBchmod\fR(2), \fBfsync\fR(2), \fBgzip\fR(1), \fBmount\fR(8), \fBssh\fR(1), \fBstat\fR(2), \fBwrite\fR(2), \fBzpool\fR(8), \fBietd.conf\fR(8), \fBzfs_encrypt\fR(1)

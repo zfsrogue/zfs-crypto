@@ -32,6 +32,7 @@ Requires:       spl = %{version}
 Requires:       zfs-dracut = %{version}
 Requires:       zfs-test = %{version}
 Requires:       %{name}-kmod >= %{version}
+Requires:       libcurl3
 Provides:       %{name}-kmod-common = %{version}
 
 %if 0%{?rhel}%{?fedora}%{?suse_version}
