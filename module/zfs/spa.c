@@ -478,7 +478,6 @@ spa_prop_validate(spa_t *spa, nvlist_t *props)
 
 				/*
                  * Must be ZPL and not gzip compressed.
-                 * and not encrypted.
                  */
 
 				if (dmu_objset_type(os) != DMU_OST_ZFS) {
@@ -486,14 +485,8 @@ spa_prop_validate(spa_t *spa, nvlist_t *props)
 				} else if ((error = dsl_prop_get_integer(strval,
 				    zfs_prop_to_name(ZFS_PROP_COMPRESSION),
 				    &compress, NULL)) == 0 &&
-				    !BOOTFS_COMPRESS_VALID(compress)) {
+				    !BOOTFS_COMPRESS_VALID(compress))
 					error = ENOTSUP;
-				} else if ((error = dsl_prop_get_integer(strval,
-                                zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
-                                                    &crypt, NULL)) == 0 &&
-                      !BOOTFS_CRYPT_VALID(crypt)) {
-                    error = ENOTSUP;
-                }
 
                 if (!error) {
                     objnum = dmu_objset_id(os);
