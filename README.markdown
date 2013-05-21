@@ -50,11 +50,8 @@ Importing a Solaris pool can be done using:
 * Removed KEY methods "https URI" (requires curl) and pkcs11 types.
 
 
-
-Example:
-
-```
-
+Example 1: Ask for password.
+============================
 # zfs create -o encryption=aes-256-gcm mypool/BOOM
   Enter passphrase for 'mypool/BOOM':
   Enter again:
@@ -69,7 +66,34 @@ Example:
 mypool  feature@async_destroy  enabled                local
 mypool  feature@encryption     active                 local
 
-```
+
+Example 2: Using a raw key file
+============================
+# dd if=/dev/urandom bs=32 count=1 > /out.key
+1+0 records in
+1+0 records out
+32 bytes (32 B) copied, 4.6033e-05 s, 695 kB/s
+# zfs create -o encryption=aes-256-gcm -o keysource=raw,file://`pwd`/out.key mypool/BOOM
+# zfs get mountpoint,checksum,compression,copies,dedup,encryption,keysource,keystatus mypool/BOOM
+NAME         PROPERTY     VALUE                SOURCE
+mypool/BOOM  mountpoint   /mypool/BOOM         default
+mypool/BOOM  checksum     sha256-mac           local
+mypool/BOOM  compression  off                  default
+mypool/BOOM  copies       1                    default
+mypool/BOOM  dedup        off                  default
+mypool/BOOM  encryption   aes-256-gcm          local
+mypool/BOOM  keysource    raw,file:///out.key  local
+mypool/BOOM  keystatus    available            -
+
+
+Example 3: Using a hex key file
+============================
+# dd if=/dev/urandom bs=32 count=1 | od -A n -v -t x1 | tr -d ' \n' > /out.key
+1+0 records in
+1+0 records out
+32 bytes (32 B) copied, 1.2811e-05 s, 2.5 MB/s
+# zfs create -o encryption=aes-256-gcm -o keysource=hex,file:///out.key mypool/BOOM
+
 
 ======================================================================
 striped, unencrypted
