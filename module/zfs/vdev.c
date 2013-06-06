@@ -61,9 +61,6 @@ static vdev_ops_t *vdev_ops_table[] = {
 	NULL
 };
 
-/* maximum scrub/resilver I/O queue per leaf vdev */
-int zfs_scrub_limit = 10;
-
 /*
  * Given a vdev type, return the appropriate ops vector.
  */
@@ -1258,11 +1255,12 @@ vdev_open(vdev_t *vd)
 	if (vd->vdev_asize == 0) {
 		/*
 		 * This is the first-ever open, so use the computed values.
-		 * For testing purposes, a higher ashift can be requested.
+		 * For compatibility, a different ashift can be requested.
 		 */
 		vd->vdev_asize = asize;
 		vd->vdev_max_asize = max_asize;
-		vd->vdev_ashift = MAX(ashift, vd->vdev_ashift);
+		if (vd->vdev_ashift == 0)
+			vd->vdev_ashift = ashift;
 	} else {
 		/*
 		 * Detect if the alignment requirement has increased.
@@ -1348,7 +1346,8 @@ vdev_validate(vdev_t *vd, boolean_t strict)
 	if (vd->vdev_ops->vdev_op_leaf && vdev_readable(vd)) {
 		uint64_t aux_guid = 0;
 		nvlist_t *nvl;
-		uint64_t txg = strict ? spa->spa_config_txg : -1ULL;
+		uint64_t txg = spa_last_synced_txg(spa) != 0 ?
+		    spa_last_synced_txg(spa) : -1ULL;
 
 		if ((label = vdev_label_read_config(vd, txg)) == NULL) {
 			vdev_set_state(vd, B_TRUE, VDEV_STATE_CANT_OPEN,
@@ -1533,7 +1532,7 @@ vdev_reopen(vdev_t *vd)
 		    !l2arc_vdev_present(vd))
 			l2arc_add_vdev(spa, vd);
 	} else {
-		(void) vdev_validate(vd, spa_last_synced_txg(spa));
+		(void) vdev_validate(vd, B_TRUE);
 	}
 
 	/*
@@ -3193,13 +3192,50 @@ vdev_split(vdev_t *vd)
 	vdev_propagate_state(cvd);
 }
 
+void
+vdev_deadman(vdev_t *vd)
+{
+	int c;
+
+	for (c = 0; c < vd->vdev_children; c++) {
+		vdev_t *cvd = vd->vdev_child[c];
+
+		vdev_deadman(cvd);
+	}
+
+	if (vd->vdev_ops->vdev_op_leaf) {
+		vdev_queue_t *vq = &vd->vdev_queue;
+
+		mutex_enter(&vq->vq_lock);
+		if (avl_numnodes(&vq->vq_pending_tree) > 0) {
+			spa_t *spa = vd->vdev_spa;
+			zio_t *fio;
+			uint64_t delta;
+
+			/*
+			 * Look at the head of all the pending queues,
+			 * if any I/O has been outstanding for longer than
+			 * the spa_deadman_synctime we log a zevent.
+			 */
+			fio = avl_first(&vq->vq_pending_tree);
+			delta = ddi_get_lbolt64() - fio->io_timestamp;
+			if (delta > NSEC_TO_TICK(spa_deadman_synctime(spa))) {
+				zfs_dbgmsg("SLOW IO: zio timestamp %llu, "
+				    "delta %llu, last io %llu",
+				    fio->io_timestamp, delta,
+				    vq->vq_io_complete_ts);
+				zfs_ereport_post(FM_EREPORT_ZFS_DELAY,
+				    spa, vd, fio, 0, 0);
+			}
+		}
+		mutex_exit(&vq->vq_lock);
+	}
+}
+
 #if defined(_KERNEL) && defined(HAVE_SPL)
 EXPORT_SYMBOL(vdev_fault);
 EXPORT_SYMBOL(vdev_degrade);
 EXPORT_SYMBOL(vdev_online);
 EXPORT_SYMBOL(vdev_offline);
 EXPORT_SYMBOL(vdev_clear);
-
-module_param(zfs_scrub_limit, int, 0644);
-MODULE_PARM_DESC(zfs_scrub_limit, "Max scrub/resilver I/O per leaf vdev");
 #endif
