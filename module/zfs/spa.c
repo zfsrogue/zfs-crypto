@@ -65,6 +65,7 @@
 #include <sys/zfs_ioctl.h>
 #include <sys/dsl_scan.h>
 #include <sys/zfeature.h>
+#include <sys/zvol.h>
 
 #ifdef	_KERNEL
 #include <sys/bootprops.h>
@@ -925,7 +926,7 @@ spa_taskq_dispatch_ent(spa_t *spa, zio_type_t t, zio_taskq_type_t q,
 	if (tqs->stqs_count == 1) {
 		tq = tqs->stqs_taskq[0];
 	} else {
-		tq = tqs->stqs_taskq[gethrtime() % tqs->stqs_count];
+		tq = tqs->stqs_taskq[((uint64_t)gethrtime()) % tqs->stqs_count];
 	}
 
 	taskq_dispatch_ent(tq, func, arg, flags, ent);
@@ -948,7 +949,7 @@ spa_taskq_dispatch_sync(spa_t *spa, zio_type_t t, zio_taskq_type_t q,
 	if (tqs->stqs_count == 1) {
 		tq = tqs->stqs_taskq[0];
 	} else {
-		tq = tqs->stqs_taskq[gethrtime() % tqs->stqs_count];
+		tq = tqs->stqs_taskq[((uint64_t)gethrtime()) % tqs->stqs_count];
 	}
 
 	id = taskq_dispatch(tq, func, arg, flags);
@@ -1866,7 +1867,7 @@ spa_load_verify_done(zio_t *zio)
 /*ARGSUSED*/
 static int
 spa_load_verify_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
-    arc_buf_t *pbuf, const zbookmark_t *zb, const dnode_phys_t *dnp, void *arg)
+    const zbookmark_t *zb, const dnode_phys_t *dnp, void *arg)
 {
 	if (bp != NULL) {
 		zio_t *rio = arg;
@@ -2866,6 +2867,7 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 	spa_load_state_t state = SPA_LOAD_OPEN;
 	int error;
 	int locked = B_FALSE;
+	int firstopen = B_FALSE;
 
 	*spapp = NULL;
 
@@ -2888,6 +2890,8 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 
 	if (spa->spa_state == POOL_STATE_UNINITIALIZED) {
 		zpool_rewind_policy_t policy;
+
+		firstopen = B_TRUE;
 
 		zpool_get_rewind_policy(nvpolicy ? nvpolicy : spa->spa_config,
 		    &policy);
@@ -2962,6 +2966,11 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 		spa->spa_load_txg = 0;
 		mutex_exit(&spa_namespace_lock);
 	}
+
+#ifdef _KERNEL
+	if (firstopen)
+		zvol_create_minors(spa->spa_name);
+#endif
 
 	*spapp = spa;
 
@@ -4019,6 +4028,10 @@ spa_import(const char *pool, nvlist_t *config, nvlist_t *props, uint64_t flags)
 
 	mutex_exit(&spa_namespace_lock);
 	spa_history_log_version(spa, LOG_POOL_IMPORT);
+
+#ifdef _KERNEL
+	zvol_create_minors(pool);
+#endif
 
 	return (0);
 }
@@ -5172,7 +5185,7 @@ spa_vdev_remove_evacuate(spa_t *spa, vdev_t *vd)
 	 * The evacuation succeeded.  Remove any remaining MOS metadata
 	 * associated with this vdev, and wait for these changes to sync.
 	 */
-	ASSERT3U(vd->vdev_stat.vs_alloc, ==, 0);
+	ASSERT0(vd->vdev_stat.vs_alloc);
 	txg = spa_vdev_config_enter(spa);
 	vd->vdev_removing = B_TRUE;
 	vdev_dirty(vd, 0, NULL, txg);
@@ -6173,7 +6186,7 @@ spa_sync(spa_t *spa, uint64_t txg)
 		zio_t *zio = zio_root(spa, NULL, NULL, 0);
 		VERIFY3U(bpobj_iterate(defer_bpo,
 		    spa_free_sync_cb, zio, tx), ==, 0);
-		VERIFY3U(zio_wait(zio), ==, 0);
+		VERIFY0(zio_wait(zio));
 	}
 
 	/*

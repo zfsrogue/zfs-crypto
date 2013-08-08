@@ -237,6 +237,7 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 		data = abuf->b_data;
 	}
 
+
 	if (error == 0) {
 		zio_cksum_t cksum = bp->blk_cksum;
 
@@ -1225,7 +1226,7 @@ zil_lwb_commit(zilog_t *zilog, itx_t *itx, lwb_t *lwb)
 	lwb->lwb_nused += reclen + dlen;
 	lwb->lwb_max_txg = MAX(lwb->lwb_max_txg, txg);
 	ASSERT3U(lwb->lwb_nused, <=, lwb->lwb_sz);
-	ASSERT3U(P2PHASE(lwb->lwb_nused, sizeof (uint64_t)), ==, 0);
+	ASSERT0(P2PHASE(lwb->lwb_nused, sizeof (uint64_t)));
 
 	return (lwb);
 }

@@ -81,9 +81,6 @@ kmem_cache_t *zio_data_buf_cache[SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT];
 int zio_bulk_flags = 0;
 int zio_delay_max = ZIO_DELAY_MAX;
 
-#ifdef _KERNEL
-extern vmem_t *zio_alloc_arena;
-#endif
 extern int zfs_mg_alloc_failures;
 
 /*
@@ -153,9 +150,6 @@ zio_init(void)
 	size_t c;
 	vmem_t *data_alloc_arena = NULL;
 
-#ifdef _KERNEL
-	data_alloc_arena = zio_alloc_arena;
-#endif
 	zio_cache = kmem_cache_create("zio_cache", sizeof (zio_t), 0,
 	    zio_cons, zio_dest, NULL, NULL, NULL, KMC_KMEM);
 	zio_link_cache = kmem_cache_create("zio_link_cache",
@@ -845,6 +839,8 @@ zio_free_sync(zio_t *pio, spa_t *spa, uint64_t txg, const blkptr_t *bp,
 	ASSERT(spa_syncing_txg(spa) == txg);
 	ASSERT(spa_sync_pass(spa) < zfs_sync_pass_deferred_free);
 
+	arc_freed(spa, bp);
+
 	zio = zio_create(pio, spa, txg, bp, NULL, BP_GET_PSIZE(bp),
 	    NULL, NULL, ZIO_TYPE_FREE, ZIO_PRIORITY_FREE, flags,
 	    NULL, 0, NULL, ZIO_STAGE_OPEN, ZIO_FREE_PIPELINE);
@@ -1426,7 +1422,7 @@ zio_interrupt(zio_t *zio)
  * vdev-level caching or aggregation; (5) the I/O is deferred
  * due to vdev-level queueing; (6) the I/O is handed off to
  * another thread.  In all cases, the pipeline stops whenever
- * there's no CPU work; it never burns a thread in cv_wait().
+ * there's no CPU work; it never burns a thread in cv_wait_io().
  *
  * There's no locking on io_stage because there's no legitimate way
  * for multiple threads to be attempting to process the same I/O.
@@ -1625,6 +1621,9 @@ zio_suspend(spa_t *spa, zio_t *zio)
 		fm_panic("Pool '%s' has encountered an uncorrectable I/O "
 		    "failure and the failure mode property for this pool "
 		    "is set to panic.", spa_name(spa));
+
+	cmn_err(CE_WARN, "Pool '%s' has encountered an uncorrectable I/O "
+	    "failure and has been suspended.\n", spa_name(spa));
 
 	zfs_ereport_post(FM_EREPORT_ZFS_IO_FAILURE, spa, NULL, NULL, 0, 0);
 
@@ -2251,7 +2250,7 @@ zio_ddt_collision(zio_t *zio, ddt_t *ddt, ddt_entry_t *dde)
 
 			ddt_exit(ddt);
 
-			error = arc_read_nolock(NULL, spa, &blk,
+			error = arc_read(NULL, spa, &blk,
 			    arc_getbuf_func, &abuf, ZIO_PRIORITY_SYNC_READ,
 			    ZIO_FLAG_CANFAIL | ZIO_FLAG_SPECULATIVE,
 			    &aflags, &zio->io_bookmark);
@@ -2505,7 +2504,7 @@ zio_dva_allocate(zio_t *zio)
 	}
 
 	ASSERT(BP_IS_HOLE(bp));
-	ASSERT3U(BP_GET_NDVAS(bp), ==, 0);
+	ASSERT0(BP_GET_NDVAS(bp));
 	ASSERT3U(zio->io_prop.zp_copies, >, 0);
 	ASSERT3U(zio->io_prop.zp_copies, <=, spa_max_replication(spa));
 	ASSERT3U(zio->io_size, ==, BP_GET_PSIZE(bp));
@@ -3441,4 +3440,16 @@ MODULE_PARM_DESC(zio_delay_max, "Max zio millisec delay before posting event");
 
 module_param(zio_requeue_io_start_cut_in_line, int, 0644);
 MODULE_PARM_DESC(zio_requeue_io_start_cut_in_line, "Prioritize requeued I/O");
+
+module_param(zfs_sync_pass_deferred_free, int, 0644);
+MODULE_PARM_DESC(zfs_sync_pass_deferred_free,
+    "defer frees starting in this pass");
+
+module_param(zfs_sync_pass_dont_compress, int, 0644);
+MODULE_PARM_DESC(zfs_sync_pass_dont_compress,
+    "don't compress starting in this pass");
+
+module_param(zfs_sync_pass_rewrite, int, 0644);
+MODULE_PARM_DESC(zfs_sync_pass_rewrite,
+    "rewrite new bps starting in this pass");
 #endif
