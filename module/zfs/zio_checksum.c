@@ -266,7 +266,7 @@ zio_checksum_error(zio_t *zio, zio_bad_cksum_t *info)
         // We know we are ignoring checksum, this is a bit noisy
         //printk("zio_checksum ignoring ECKSUM error!!\n");
 #endif
-		//return (ECKSUM);
+	  return (ECKSUM);
     }
 
 	if (zio_injection_enabled && !zio->io_error &&
