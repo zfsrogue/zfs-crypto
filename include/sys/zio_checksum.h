@@ -44,8 +44,7 @@ typedef const struct zio_checksum_info {
 	int		ci_correctable;	/* number of correctable bits	*/
 	int		ci_eck;		/* uses zio embedded checksum? */
 	int		ci_dedup;	/* strong enough for dedup? */
-    //     int		ci_trunc;	/* truncated checksum + crypto MAC */
-    // Skipping ci_trunc, since currently only one checksum is supported.
+        int		ci_trunc;	/* truncated checksum + crypto MAC */
 	char		*ci_name;	/* descriptive name */
 } zio_checksum_info_t;
 
