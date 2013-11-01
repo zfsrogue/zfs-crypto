@@ -1,10 +1,5 @@
-<<<<<<< HEAD
 man_MANS = zhack.1 zpios.1 ztest.1 zfs_encrypt.1
-EXTRA_DIST = $(man_MANS)
-=======
-man_MANS = zhack.1 zpios.1 ztest.1
 EXTRA_DIST = $(man_MANS) cstyle.1
->>>>>>> upstream/master
 
 install-data-local:
 	$(INSTALL) -d -m 0755 "$(DESTDIR)$(mandir)/man1"

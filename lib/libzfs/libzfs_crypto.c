@@ -347,7 +347,8 @@ hexstr_to_bytes(char *hexstr, size_t hexlen, uchar_t **bytes, size_t *blen)
 static int
 get_passphrase(libzfs_handle_t *hdl, char **passphrase,
     size_t *passphraselen, key_format_t format, char *zc_name, char *zc_value,
-    zfs_ioc_crypto_t *zic, zfs_crypto_zckey_t cmd)
+    zfs_ioc_crypto_t *zic,
+    zfs_crypto_zckey_t cmd)
 {
 	char prompt[MAXPROMPTLEN];
 	char *tmpbuf = NULL;

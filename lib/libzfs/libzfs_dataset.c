@@ -2256,7 +2256,7 @@ zfs_prop_get(zfs_handle_t *zhp, zfs_prop_t prop, char *propbuf, size_t proplen,
                        localtime_r(&time, &t) == NULL ||
                        strftime(propbuf, proplen, "%a %b %e %k:%M %Y",
                                 &t) == 0) {
-                (void) snprintf(propbuf, proplen, "%llu", val);
+                (void) snprintf(propbuf, proplen, "%llu", (u_longlong_t) val);
             }
         }
         break;
@@ -3126,6 +3126,7 @@ zfs_create(libzfs_handle_t *hdl, const char *path, zfs_type_t type,
 	char errbuf[1024];
 	uint64_t zoned;
 	dmu_objset_type_t ost;
+    zfs_ioc_crypto_t zic = { 0 };
 
 	(void) snprintf(errbuf, sizeof (errbuf), dgettext(TEXT_DOMAIN,
 	    "cannot create '%s'"), path);
@@ -3206,23 +3207,14 @@ zfs_create(libzfs_handle_t *hdl, const char *path, zfs_type_t type,
 		}
 	}
 
-<<<<<<< HEAD
     /* zfs_crypto_create may update props */
-    if (zfs_crypto_zckey(hdl, ZFS_CRYPTO_CREATE, props, &zc, type) != 0)
+    if (zfs_crypto_zckey(hdl, ZFS_CRYPTO_CREATE, props, (char *)path, NULL,
+                         &zic, type) != 0)
         return (-1);
 
-	if (props && zcmd_write_src_nvlist(hdl, &zc, props) != 0)
-		return (-1);
-	nvlist_free(props);
-
 	/* create the dataset */
-    // THIS FAILS.
-	ret = zfs_ioctl(hdl, ZFS_IOC_CREATE, &zc);
-=======
-	/* create the dataset */
-	ret = lzc_create(path, ost, props);
+	ret = lzc_create(path, ost, props, &zic);
 	nvlist_free(props);
->>>>>>> upstream/master
 
 	if (ret == 0 && type == ZFS_TYPE_VOLUME) {
 		ret = zvol_create_link(hdl, path);
@@ -3438,6 +3430,8 @@ zfs_clone(zfs_handle_t *zhp, const char *target, nvlist_t *props)
 	char errbuf[1024];
 	libzfs_handle_t *hdl = zhp->zfs_hdl;
 	uint64_t zoned;
+    zfs_type_t type = 0;
+    zfs_ioc_crypto_t zic = { 0 };
 
 	assert(zhp->zfs_type == ZFS_TYPE_SNAPSHOT);
 
@@ -3457,7 +3451,6 @@ zfs_clone(zfs_handle_t *zhp, const char *target, nvlist_t *props)
 	/* do the clone */
 
 	if (props) {
-		zfs_type_t type;
 		if (ZFS_IS_VOLUME(zhp)) {
 			type = ZFS_TYPE_VOLUME;
 		} else {
@@ -3466,37 +3459,18 @@ zfs_clone(zfs_handle_t *zhp, const char *target, nvlist_t *props)
 		if ((props = zfs_valid_proplist(hdl, type, props, zoned,
 		    zhp, errbuf)) == NULL)
 			return (-1);
-<<<<<<< HEAD
-
-		if (zcmd_write_src_nvlist(hdl, &zc, props) != 0) {
-			nvlist_free(props);
-			return (-1);
-		}
 	}
-
-	(void) strlcpy(zc.zc_name, target, sizeof (zc.zc_name));
-	(void) strlcpy(zc.zc_value, zhp->zfs_name, sizeof (zc.zc_value));
 
     /* may update props */
-    if (zfs_crypto_zckey(zhp->zfs_hdl, ZFS_CRYPTO_CLONE, props, &zc, type) != 0) {
+    if (zfs_crypto_zckey(zhp->zfs_hdl, ZFS_CRYPTO_CLONE, props, (char *)target,
+                         zhp->zfs_name, &zic, type) != 0) {
         nvlist_free(props);
         return (-1);
     }
 
-    if (props && zcmd_write_src_nvlist(hdl, &zc, props) != 0) {
-        nvlist_free(props);
-        return (-1);
-    }
-
-	ret = zfs_ioctl(zhp->zfs_hdl, ZFS_IOC_CREATE, &zc);
-
-	zcmd_free_nvlists(&zc);
-=======
-	}
-
-	ret = lzc_clone(target, zhp->zfs_name, props);
+	ret = lzc_clone(target, zhp->zfs_name, props, &zic);
 	nvlist_free(props);
->>>>>>> upstream/master
+
 
 	if (ret != 0) {
 		switch (errno) {
@@ -3843,7 +3817,7 @@ zfs_snapshot(libzfs_handle_t *hdl, const char *path, boolean_t recursive,
 
 	if (!zfs_validate_name(hdl, path, ZFS_TYPE_SNAPSHOT, B_TRUE))
 		return (zfs_error(hdl, EZFS_INVALIDNAME, errbuf));
- 
+
 	(void) strlcpy(fsname, path, sizeof (fsname));
 	cp = strchr(fsname, '@');
 	*cp = '\0';

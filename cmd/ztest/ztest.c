@@ -2384,11 +2384,7 @@ ztest_spa_create_destroy(ztest_ds_t *zd, uint64_t id)
 	 */
 	nvroot = make_vdev_root("/dev/bogus", NULL, NULL, 0, 0, 0, 0, 0, 1);
 	VERIFY3U(ENOENT, ==,
-<<<<<<< HEAD
              spa_create("ztest_bad_file", nvroot, NULL, NULL, NULL, NULL));
-=======
-	    spa_create("ztest_bad_file", nvroot, NULL, NULL));
->>>>>>> upstream/master
 	nvlist_free(nvroot);
 
 	/*
@@ -2396,11 +2392,7 @@ ztest_spa_create_destroy(ztest_ds_t *zd, uint64_t id)
 	 */
 	nvroot = make_vdev_root("/dev/bogus", NULL, NULL, 0, 0, 0, 0, 2, 1);
 	VERIFY3U(ENOENT, ==,
-<<<<<<< HEAD
              spa_create("ztest_bad_mirror", nvroot, NULL, NULL, NULL, NULL));
-=======
-	    spa_create("ztest_bad_mirror", nvroot, NULL, NULL));
->>>>>>> upstream/master
 	nvlist_free(nvroot);
 
 	/*
@@ -2409,11 +2401,7 @@ ztest_spa_create_destroy(ztest_ds_t *zd, uint64_t id)
 	 */
 	(void) rw_enter(&ztest_name_lock, RW_READER);
 	nvroot = make_vdev_root("/dev/bogus", NULL, NULL, 0, 0, 0, 0, 0, 1);
-<<<<<<< HEAD
 	VERIFY3U(EEXIST, ==, spa_create(zo->zo_pool, nvroot, NULL, NULL, NULL, NULL));
-=======
-	VERIFY3U(EEXIST, ==, spa_create(zo->zo_pool, nvroot, NULL, NULL));
->>>>>>> upstream/master
 	nvlist_free(nvroot);
 	VERIFY3U(0, ==, spa_open(zo->zo_pool, &spa, FTAG));
 	VERIFY3U(EBUSY, ==, spa_destroy(zo->zo_pool));
@@ -2471,11 +2459,7 @@ ztest_spa_upgrade(ztest_ds_t *zd, uint64_t id)
 	props = fnvlist_alloc();
 	fnvlist_add_uint64(props,
 	    zpool_prop_to_name(ZPOOL_PROP_VERSION), version);
-<<<<<<< HEAD
 	VERIFY3S(spa_create(name, nvroot, props, NULL, NULL, NULL), ==, 0);
-=======
-	VERIFY3S(spa_create(name, nvroot, props, NULL), ==, 0);
->>>>>>> upstream/master
 	fnvlist_free(nvroot);
 	fnvlist_free(props);
 
@@ -3533,13 +3517,10 @@ ztest_dsl_dataset_cleanup(char *osname, uint64_t id)
 void
 ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
 {
-<<<<<<< HEAD
 	objset_t *clone;
 	dsl_dataset_t *ds;
     dsl_crypto_ctx_t dcc = { 0 };
-=======
 	objset_t *os;
->>>>>>> upstream/master
 	char *snap1name;
 	char *clone1name;
 	char *snap2name;
@@ -3583,7 +3564,6 @@ ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
 		fatal(0, "dmu_take_snapshot(%s) = %d", snap1name, error);
 	}
 
-<<<<<<< HEAD
 	error = dmu_objset_hold(snap1name, FTAG, &clone);
 	if (error)
 		fatal(0, "dmu_open_snapshot(%s) = %d", snap1name, error);
@@ -3591,11 +3571,8 @@ ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
         dcc.dcc_crypt = zd->zd_crypt;
         dcc.dcc_wrap_key = zcrypt_key_gen(zd->zd_crypt);
     }
-	error = dmu_objset_clone(clone1name, dmu_objset_ds(clone), &dcc, 0);
+	error = dmu_objset_clone(clone1name, snap1name, &dcc);
 	dmu_objset_rele(clone, FTAG);
-=======
-	error = dmu_objset_clone(clone1name, snap1name);
->>>>>>> upstream/master
 	if (error) {
 		if (error == ENOSPC) {
 			ztest_record_enospc(FTAG);
@@ -3622,16 +3599,13 @@ ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
 		fatal(0, "dmu_open_snapshot(%s) = %d", snap3name, error);
 	}
 
-<<<<<<< HEAD
 	error = dmu_objset_hold(snap3name, FTAG, &clone);
 	if (error)
 		fatal(0, "dmu_open_snapshot(%s) = %d", snap3name, error);
 
-	error = dmu_objset_clone(clone2name, dmu_objset_ds(clone), &dcc, 0);
+	error = dmu_objset_clone(clone2name, snap3name, &dcc);
 	dmu_objset_rele(clone, FTAG);
-=======
-	error = dmu_objset_clone(clone2name, snap3name);
->>>>>>> upstream/master
+
 	if (error) {
 		if (error == ENOSPC) {
 			ztest_record_enospc(FTAG);
@@ -4845,7 +4819,6 @@ ztest_spa_prop_get_set(ztest_ds_t *zd, uint64_t id)
 	(void) rw_exit(&ztest_name_lock);
 }
 
-<<<<<<< HEAD
 
 /*ARGSUSED*/
 void
@@ -4856,8 +4829,13 @@ ztest_dsl_crypto(ztest_ds_t *zd, uint64_t id)
     zcrypt_key_t *wrapkey;
     int error;
     char *name;
+    dsl_pool_t *dp;
 
     if (!ztest_opts.zo_crypto || zd->zd_crypt == 0 || zd->zd_crypt == ZIO_CRYPT_OFF)
+        return;
+
+    error = dsl_pool_hold(name, FTAG, &dp);
+    if (error != 0)
         return;
 
     (void) rw_enter(&ztest_name_lock,
@@ -4865,7 +4843,8 @@ ztest_dsl_crypto(ztest_ds_t *zd, uint64_t id)
     //(void) rw_wrlock(&zs->zs_name_lock);
     name = zd->zd_name;
 
-    (void) dsl_dataset_keystatus_byname(name, &keystatus);
+    (void) dsl_dataset_keystatus_byname(dp, name, &keystatus);
+    dsl_pool_rele(dp, FTAG);
 
     if (ztest_opts.zo_verbose >= 6) {
         const char *kstr;
@@ -4905,7 +4884,6 @@ ztest_dsl_crypto(ztest_ds_t *zd, uint64_t id)
 }
 
 
-=======
 static int
 user_release_one(const char *snapname, const char *holdname)
 {
@@ -4922,7 +4900,6 @@ user_release_one(const char *snapname, const char *holdname)
 	return (error);
 }
 
->>>>>>> upstream/master
 /*
  * Test snapshot hold/release and deferred destroy.
  */
@@ -4976,7 +4953,6 @@ ztest_dmu_snapshot_hold(ztest_ds_t *zd, uint64_t id)
 		fatal(0, "dmu_objset_snapshot(%s) = %d", fullname, error);
 	}
 
-<<<<<<< HEAD
 	error = dmu_objset_hold(fullname, FTAG, &origin);
 	if (error)
 		fatal(0, "dmu_objset_hold(%s) = %d", fullname, error);
@@ -4987,11 +4963,9 @@ ztest_dmu_snapshot_hold(ztest_ds_t *zd, uint64_t id)
         dcc.dcc_wrap_key = zcrypt_key_gen(zd->zd_crypt);
     }
 
-	error = dmu_objset_clone(clonename, dmu_objset_ds(origin), &dcc, 0);
+	error = dmu_objset_clone(clonename, fullname, &dcc);
 	dmu_objset_rele(origin, FTAG);
-=======
-	error = dmu_objset_clone(clonename, fullname);
->>>>>>> upstream/master
+
 	if (error) {
 		if (error == ENOSPC) {
 			ztest_record_enospc("dmu_objset_clone");
@@ -5792,6 +5766,7 @@ ztest_dataset_open(ztest_shared_t *zs, int d)
 	char name[MAXNAMELEN];
 	int error;
     dsl_crypto_ctx_t dcc = { 0 };
+    dsl_pool_t *dp;
 
 	ztest_dataset_name(name, ztest_opts.zo_pool, d);
 
@@ -5836,7 +5811,11 @@ ztest_dataset_open(ztest_shared_t *zs, int d)
 
     if (ztest_opts.zo_crypto && error == EEXIST) {
         zfs_crypt_key_status_t keystatus;
-        VERIFY3U(dsl_dataset_keystatus_byname(name, &keystatus), ==, 0);
+        error = dsl_pool_hold(name, FTAG, &dp);
+        if (error) {
+            VERIFY3U(dsl_dataset_keystatus_byname(dp, name, &keystatus), ==, 0);
+            dsl_pool_rele(dp, FTAG);
+        }
         if (ztest_opts.zo_verbose >= 6) {
             const char *kstr;
             VERIFY(zfs_prop_index_to_string(ZFS_PROP_KEYSTATUS,
@@ -6231,12 +6210,8 @@ ztest_init(ztest_shared_t *zs)
 		VERIFY3U(0, ==, nvlist_add_uint64(props, buf, 0));
 		free(buf);
 	}
-<<<<<<< HEAD
 	VERIFY3U(0, ==, spa_create(ztest_opts.zo_pool, nvroot, props,
                                NULL, NULL, NULL));
-=======
-	VERIFY3U(0, ==, spa_create(ztest_opts.zo_pool, nvroot, props, NULL));
->>>>>>> upstream/master
 	nvlist_free(nvroot);
 
 	VERIFY3U(0, ==, spa_open(ztest_opts.zo_pool, &spa, FTAG));

@@ -263,33 +263,29 @@ void dmu_objset_rele(objset_t *os, void *tag);
 void dmu_objset_disown(objset_t *os, void *tag);
 int dmu_objset_open_ds(struct dsl_dataset *ds, objset_t **osp);
 
-<<<<<<< HEAD
-int dmu_objset_evict_dbufs(objset_t *os);
+void dmu_objset_evict_dbufs(objset_t *os);
     // FIXME
 #if 0
 =======
 void dmu_objset_evict_dbufs(objset_t *os);
->>>>>>> upstream/master
 int dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
                       struct dsl_crypto_ctx *crypto_ctx,
     void (*func)(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx), void *arg);
-<<<<<<< HEAD
 int dmu_objset_clone(const char *name, struct dsl_dataset *clone_origin,
-    struct dsl_crypto_ctx *crypto_ctx, uint64_t flags);
+    struct dsl_crypto_ctx *crypto_ctx);
 #endif
 int dmu_objset_destroy(const char *name, boolean_t defer);
-int dmu_snapshots_destroy_nvl(struct nvlist *snaps, boolean_t defer, char *);
 int dmu_objset_snapshot(char *fsname, char *snapname, char *tag,
     struct nvlist *props, boolean_t recursive, boolean_t temporary, int fd);
 int dmu_objset_rename(const char *name, const char *newname,
     boolean_t recursive);
-=======
-int dmu_objset_clone(const char *name, const char *origin);
+int dmu_objset_clone(const char *name, const char *clone_origin,
+    struct dsl_crypto_ctx *crypto_ctx);
 int dsl_destroy_snapshots_nvl(struct nvlist *snaps, boolean_t defer,
     struct nvlist *errlist);
 int dmu_objset_snapshot_one(const char *fsname, const char *snapname);
 int dmu_objset_snapshot_tmp(const char *, const char *, int);
->>>>>>> upstream/master
+
 int dmu_objset_find(char *name, int func(const char *, void *), void *arg,
     int flags);
 void dmu_objset_byteswap(void *buf, size_t size);
@@ -815,42 +811,8 @@ typedef void (*dmu_traverse_cb_t)(objset_t *os, void *arg, struct blkptr *bp,
 void dmu_traverse_objset(objset_t *os, uint64_t txg_start,
     dmu_traverse_cb_t cb, void *arg);
 
-<<<<<<< HEAD
-int dmu_send(objset_t *tosnap, objset_t *fromsnap, boolean_t fromorigin,
-    int outfd, struct vnode *vp, offset_t *off);
-int dmu_send_estimate(objset_t *tosnap, objset_t *fromsnap, boolean_t fromorign,
-    uint64_t *sizep);
-
-typedef struct dmu_recv_cookie {
-	/*
-	 * This structure is opaque!
-	 *
-	 * If logical and real are different, we are recving the stream
-	 * into the "real" temporary clone, and then switching it with
-	 * the "logical" target.
-	 */
-	struct dsl_dataset *drc_logical_ds;
-	struct dsl_dataset *drc_real_ds;
-	struct drr_begin *drc_drrb;
-	char *drc_tosnap;
-	char *drc_top_ds;
-	boolean_t drc_newfs;
-	boolean_t drc_force;
-	struct avl_tree *drc_guid_to_ds_map;
-} dmu_recv_cookie_t;
-
-int dmu_recv_begin(char *tofs, char *tosnap, char *topds, struct drr_begin *,
-                   boolean_t force, objset_t *origin, dmu_recv_cookie_t *, struct dsl_crypto_ctx *dcc);
-int dmu_recv_stream(dmu_recv_cookie_t *drc, struct vnode *vp, offset_t *voffp,
-    int cleanup_fd, uint64_t *action_handlep);
-int dmu_recv_end(dmu_recv_cookie_t *drc);
-
-int dmu_diff(objset_t *tosnap, objset_t *fromsnap, struct vnode *vp,
-    offset_t *off);
-=======
 int dmu_diff(const char *tosnap_name, const char *fromsnap_name,
     struct vnode *vp, offset_t *offp);
->>>>>>> upstream/master
 
 /* CRC64 table */
 #define	ZFS_CRC64_POLY	0xC96C5795D7870F42ULL	/* ECMA-182, reflected form */

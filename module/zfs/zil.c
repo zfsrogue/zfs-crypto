@@ -229,7 +229,7 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
                                 ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
 
 	} else {
-		error = arc_read(NULL, zilog->zl_spa, bp, 0, arc_getbuf_func,
+		error = arc_read(NULL, zilog->zl_spa, bp, arc_getbuf_func,
                          &abuf, ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
 		if (error)
 			return (error);
@@ -279,11 +279,8 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 			}
 		}
 
-<<<<<<< HEAD
-		//VERIFY(arc_buf_remove_ref(abuf, &abuf) == 1);
-=======
 		VERIFY(arc_buf_remove_ref(abuf, &abuf));
->>>>>>> upstream/master
+
 	}
 
 	if (raw)
@@ -342,7 +339,7 @@ zil_read_log_data(zilog_t *zilog, const lr_write_t *lr, void *wbuf)
 	} else {
 		arc_buf_t *abuf = NULL;
 
-		error = arc_read(NULL, zilog->zl_spa, bp, 0, arc_getbuf_func,
+		error = arc_read(NULL, zilog->zl_spa, bp, arc_getbuf_func,
 		    &abuf, ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
 		if (error)
 			return (error);
@@ -1081,12 +1078,7 @@ zil_lwb_write_start(zilog_t *zilog, lwb_t *lwb)
 
 	BP_ZERO(bp);
 	use_slog = USE_SLOG(zilog);
-<<<<<<< HEAD
 	error = zio_alloc_zil(spa, txg, bp, zil_blksz, USE_SLOG(zilog), zilog->zl_os->os_crypt);
-=======
-	error = zio_alloc_zil(spa, txg, bp, zil_blksz,
-	    USE_SLOG(zilog));
->>>>>>> upstream/master
 	if (use_slog)
 	{
 		ZIL_STAT_BUMP(zil_itx_metaslab_slog_count);

@@ -56,7 +56,6 @@ typedef struct dsl_props_arg {
     //zone_t *pa_zone; //FIXME
 } dsl_props_arg_t;
 
-<<<<<<< HEAD
 typedef struct dsl_prop_set_arg {
 	const char *psa_name;
 	zprop_source_t psa_source;
@@ -72,8 +71,6 @@ typedef struct dsl_prop_set_arg {
 	uint64_t psa_effective_value;
 } dsl_prop_setarg_t;
 
-=======
->>>>>>> upstream/master
 int dsl_prop_register(struct dsl_dataset *ds, const char *propname,
     dsl_prop_changed_cb_t *callback, void *cbarg);
 int dsl_prop_unregister(struct dsl_dataset *ds, const char *propname,

@@ -176,11 +176,8 @@
 #include <sys/zvol.h>
 #include <sys/dsl_scan.h>
 #include <sharefs/share.h>
-<<<<<<< HEAD
 #include <sys/dmu_objset.h>
 #include <sys/dsl_crypto.h>
-=======
->>>>>>> upstream/master
 #include <sys/fm/util.h>
 #include <sys/zfeature.h>
 
@@ -248,13 +245,9 @@ static int zfs_check_clearable(char *dataset, nvlist_t *props,
     nvlist_t **errors);
 static int zfs_fill_zplprops_root(uint64_t, nvlist_t *, nvlist_t *,
     boolean_t *);
-<<<<<<< HEAD
-int zfs_set_prop_nvlist(const char *, zprop_source_t, nvlist_t *, nvlist_t **);
-static int zfs_get_crypto_ctx(zfs_cmd_t *zc, dsl_crypto_ctx_t *dcc);
-=======
+static int zfs_get_crypto_ctx(char *name, zfs_ioc_crypto_t *zic, dsl_crypto_ctx_t *dcc);
 int zfs_set_prop_nvlist(const char *, zprop_source_t, nvlist_t *, nvlist_t *);
 static int get_nvlist(uint64_t nvl, uint64_t size, int iflag, nvlist_t **nvp);
->>>>>>> upstream/master
 
 static int zfs_prop_activate_feature(spa_t *spa, zfeature_info_t *feature);
 
@@ -1229,7 +1222,7 @@ zfs_secpolicy_tmp_snapshot(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
  *      wrapping key change, new data encryption key
  */
 static int
-zfs_secpolicy_crypto_keyuse(zfs_cmd_t *zc, cred_t *cr)
+zfs_secpolicy_crypto_keyuse(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 {
     int err;
     char val[MAXNAMELEN];           /* value ignored */
@@ -1260,7 +1253,7 @@ zfs_secpolicy_crypto_keyuse(zfs_cmd_t *zc, cred_t *cr)
 }
 
 static int
-zfs_secpolicy_crypto_keychange(zfs_cmd_t *zc, cred_t *cr)
+zfs_secpolicy_crypto_keychange(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 {
     return (zfs_secpolicy_write_perms(zc->zc_name,
                                       ZFS_DELEG_PERM_KEYCHANGE, cr));
@@ -1440,11 +1433,8 @@ zfs_ioc_pool_create(zfs_cmd_t *zc)
 	nvlist_t *config, *props = NULL;
 	nvlist_t *rootprops = NULL;
 	nvlist_t *zplprops = NULL;
-<<<<<<< HEAD
 	char *buf;
     dsl_crypto_ctx_t dcc = { 0 };
-=======
->>>>>>> upstream/master
 
 	if ((error = get_nvlist(zc->zc_nvlist_conf, zc->zc_nvlist_conf_size,
 	    zc->zc_iflags, &config)))
@@ -1457,9 +1447,11 @@ zfs_ioc_pool_create(zfs_cmd_t *zc)
 		return (error);
 	}
 
-    if ((error = zfs_get_crypto_ctx(zc, &dcc)) != 0) {
+    printk("pool create\n");
+    if ((error = zfs_get_crypto_ctx(zc->zc_name, &zc->zc_crypto, &dcc)) != 0) {
         return (error);
     }
+    printk("pool create2\n");
 
 	if (props) {
 		nvlist_t *nvl = NULL;
@@ -1488,13 +1480,9 @@ zfs_ioc_pool_create(zfs_cmd_t *zc)
 			goto pool_props_bad;
 	}
 
-<<<<<<< HEAD
 	buf = history_str_get(zc);
 
 	error = spa_create(zc->zc_name, config, props, buf, &dcc, zplprops);
-=======
-	error = spa_create(zc->zc_name, config, props, zplprops);
->>>>>>> upstream/master
 
 	/*
 	 * Set the remaining root properties
@@ -1694,22 +1682,18 @@ zfs_ioc_pool_freeze(zfs_cmd_t *zc)
 }
 
 static int
-zfs_feature_encryption(spa_t *spa, uint64_t dsobj,
-                       const char *dsname, void *arg)
+zfs_feature_encryption(struct dsl_pool *dp, struct dsl_dataset *ds, void *arg)
 {
-	dsl_dataset_t *ds;
 	uint64_t crypt;
 	int error;
 	dmu_tx_t *tx;
 	objset_t *os;
+    char dsname[MAXNAMELEN];
 
-	if ((error = dsl_dataset_hold(dsname, FTAG, &ds)) != 0)
-		return (error);
-
-	rw_enter(&ds->ds_dir->dd_pool->dp_config_rwlock, RW_READER);
+	rrw_enter(&ds->ds_dir->dd_pool->dp_config_rwlock, RW_READER, FTAG);
 	error = dsl_prop_get_ds(ds, zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
                             8, 1, &crypt, NULL/*, DSL_PROP_GET_EFFECTIVE*/);
-	rw_exit(&ds->ds_dir->dd_pool->dp_config_rwlock);
+	rrw_exit(&ds->ds_dir->dd_pool->dp_config_rwlock, FTAG);
 
 	if ((error == 0) &&
         (crypt != ZIO_CRYPT_OFF)) {
@@ -1721,24 +1705,23 @@ zfs_feature_encryption(spa_t *spa, uint64_t dsobj,
             error = dmu_tx_assign(tx, TXG_WAIT);
             if (!error) {
 
-                if (!spa_feature_is_enabled(spa,
+                if (!spa_feature_is_enabled(dp->dp_spa,
                                             &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
-                    spa_feature_enable(spa,
+                    spa_feature_enable(dp->dp_spa,
                                        &spa_feature_table[SPA_FEATURE_ENCRYPTION],
                                        tx);
                 }
-                spa_feature_incr(spa,
+                spa_feature_incr(dp->dp_spa,
                                  &spa_feature_table[SPA_FEATURE_ENCRYPTION],
                                  tx);
                 dmu_tx_commit(tx);
 
+                dsl_dataset_name(ds, dsname);
                 printk("feature@encryption active on '%s'\n", dsname);
             }
         } // os
     }
 
-
-    dsl_dataset_rele(ds, FTAG);
 	return (0);
 }
 
@@ -1763,12 +1746,18 @@ zfs_ioc_pool_upgrade(zfs_cmd_t *zc)
 	spa_upgrade(spa, zc->zc_cookie);
 
     if (version == SPA_VERSION_30) {
+        dsl_pool_t *dp;
+
         printk("Converting pool version=encryption to feature@encryption\n");
-        VERIFY(0 == dmu_objset_find_spa(spa,
-                                        NULL,
-                                        zfs_feature_encryption,
-                                        NULL,
-                                        DS_FIND_CHILDREN | DS_FIND_SNAPSHOTS));
+        error = dsl_pool_hold(zc->zc_name, FTAG, &dp);
+        if (!error) {
+            VERIFY(0 == dmu_objset_find_dp(dp,
+                                           0,
+                                           zfs_feature_encryption,
+                                           NULL,
+                                         DS_FIND_CHILDREN|DS_FIND_SNAPSHOTS));
+            dsl_pool_rele(dp, FTAG);
+        }
     }
 
 	spa_close(spa, FTAG);
@@ -2716,17 +2705,11 @@ retry:
 			}
 
 			if (err != 0) {
-<<<<<<< HEAD
-				VERIFY(nvlist_add_int32(errors, propname,
-				    err) == 0);
-
-=======
 				if (errlist != NULL) {
 					fnvlist_add_int32(errlist, propname,
 					    err);
 				}
 				rv = err;
->>>>>>> upstream/master
 			}
 		}
 	}
@@ -3273,14 +3256,15 @@ zfs_fill_zplprops_root(uint64_t spa_vers, nvlist_t *createprops,
 }
 
 static int
-zfs_get_crypto_ctx(zfs_cmd_t *zc, dsl_crypto_ctx_t *dcc)
+zfs_get_crypto_ctx(char *name, zfs_ioc_crypto_t *zic, dsl_crypto_ctx_t *dcc)
 {
     int error = 0;
     dsl_dataset_t *ids;
     zcrypt_key_t *wkey;
+    dsl_pool_t *dp;
 
-    if (zc->zc_crypto.zic_cmd != 0 &&
-        zfs_earlier_version(zc->zc_name, SPA_VERSION_FEATURES))
+    if (zic->zic_cmd != 0 &&
+        zfs_earlier_version(name, SPA_VERSION_FEATURES))
         return (ENOTSUP);
 
     /*
@@ -3289,40 +3273,46 @@ zfs_get_crypto_ctx(zfs_cmd_t *zc, dsl_crypto_ctx_t *dcc)
      * set via the zvol_preallocate_init() path.
      */
 
-    switch (zc->zc_crypto.zic_cmd) {
+    switch (zic->zic_cmd) {
     case ZFS_IOC_CRYPTO_KEY_LOAD:
-        error = zcrypt_key_from_ioc(&zc->zc_crypto,
+        error = zcrypt_key_from_ioc(zic,
                                     &dcc->dcc_wrap_key);
         if (error != 0) {
             return (error);
                 }
-        dcc->dcc_clone_newkey = zc->zc_crypto.zic_clone_newkey;
-        dcc->dcc_crypt = zc->zc_crypto.zic_crypt;
+        dcc->dcc_clone_newkey = zic->zic_clone_newkey;
+        dcc->dcc_crypt = zic->zic_crypt;
         break;
     case ZFS_IOC_CRYPTO_KEY_INHERIT:
-        if (dataset_namecheck(zc->zc_crypto.zic_inherit_dsname,
+        if (dataset_namecheck(zic->zic_inherit_dsname,
                               NULL, NULL) != 0) {
             return (EINVAL);
         }
-        error = dsl_dataset_hold(zc->zc_crypto.zic_inherit_dsname,
+        error = dsl_pool_hold(zic->zic_inherit_dsname, FTAG, &dp);
+        if (error != 0)
+            return (error);
+
+        error = dsl_dataset_hold(dp, zic->zic_inherit_dsname,
                                  FTAG, &ids);
         if (error != 0) {
+            dsl_pool_rele(dp, FTAG);
             return (error);
         }
 
         wkey = zcrypt_keystore_find_wrappingkey(
                                                 dsl_dataset_get_spa(ids), ids->ds_object);
         dsl_dataset_rele(ids, FTAG);
+        dsl_pool_rele(dp, FTAG);
         if (wkey == NULL) {
             return (ENOTSUP);
         }
         dcc->dcc_wrap_key = zcrypt_key_copy(wkey);
-        dcc->dcc_clone_newkey = zc->zc_crypto.zic_clone_newkey;
-        dcc->dcc_crypt = zc->zc_crypto.zic_crypt;
+        dcc->dcc_clone_newkey = zic->zic_clone_newkey;
+        dcc->dcc_crypt = zic->zic_crypt;
         break;
     }
 
-    dcc->dcc_salt = zc->zc_crypto.zic_salt;
+    dcc->dcc_salt = zic->zic_salt;
 
     return (error);
 }
@@ -3340,17 +3330,15 @@ static int
 zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 {
 	int error = 0;
-<<<<<<< HEAD
 	zfs_creat_t zct;
     dsl_crypto_ctx_t dcc = { 0 };
-=======
-	zfs_creat_t zct = { 0 };
->>>>>>> upstream/master
 	nvlist_t *nvprops = NULL;
 	void (*cbfunc)(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx);
 	int32_t type32;
 	dmu_objset_type_t type;
 	boolean_t is_insensitive = B_FALSE;
+    zfs_ioc_crypto_t *zic = NULL;
+    unsigned int size;
 
 	if (nvlist_lookup_int32(innvl, "type", &type32) != 0)
 		return (EINVAL);
@@ -3376,118 +3364,74 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 
 	zct.zct_props = nvprops;
 
-<<<<<<< HEAD
-    if ((error = zfs_get_crypto_ctx(zc, &dcc)) != 0) {
+    if (cbfunc == NULL)
+        return (EINVAL);
+
+	if (nvlist_lookup_byte_array(innvl, "crypto_ctx", (uchar_t **)&zic,
+                                 &size) != 0)
+		return (EINVAL);
+
+    if ((size != sizeof(*zic)) ||
+        (error = zfs_get_crypto_ctx((char *)fsname, zic, &dcc)) != 0) {
         return (error);
     }
 
-	if (zc->zc_value[0] != '\0') {
-		/*
-		 * We're creating a clone of an existing snapshot.
-		 */
-		zc->zc_value[sizeof (zc->zc_value) - 1] = '\0';
-		if (dataset_namecheck(zc->zc_value, NULL, NULL) != 0) {
-			nvlist_free(nvprops);
-			return (EINVAL);
-		}
+    if (type == DMU_OST_ZVOL) {
+        uint64_t volsize, volblocksize;
 
-		error = dmu_objset_hold(zc->zc_value, FTAG, &clone);
-		if (error) {
-			nvlist_free(nvprops);
-			return (error);
-		}
+        if (nvprops == NULL)
+            return (EINVAL);
+        if (nvlist_lookup_uint64(nvprops,
+                    zfs_prop_to_name(ZFS_PROP_VOLSIZE), &volsize) != 0)
+            return (EINVAL);
 
-		error = dmu_objset_clone(zc->zc_name, dmu_objset_ds(clone), &dcc, 0);
-		dmu_objset_rele(clone, FTAG);
-		if (error) {
-			nvlist_free(nvprops);
-			return (error);
-		}
-	} else {
-		boolean_t is_insensitive = B_FALSE;
-=======
-	if (cbfunc == NULL)
-		return (EINVAL);
+        if ((error = nvlist_lookup_uint64(nvprops,
+                    zfs_prop_to_name(ZFS_PROP_VOLBLOCKSIZE),
+                           &volblocksize)) != 0 && error != ENOENT)
+            return (EINVAL);
 
-	if (type == DMU_OST_ZVOL) {
-		uint64_t volsize, volblocksize;
->>>>>>> upstream/master
+        if (error != 0)
+            volblocksize = zfs_prop_default_numeric(
+                                                    ZFS_PROP_VOLBLOCKSIZE);
 
-		if (nvprops == NULL)
-			return (EINVAL);
-		if (nvlist_lookup_uint64(nvprops,
-		    zfs_prop_to_name(ZFS_PROP_VOLSIZE), &volsize) != 0)
-			return (EINVAL);
+        if ((error = zvol_check_volblocksize(
+                                             volblocksize)) != 0 ||
+            (error = zvol_check_volsize(volsize,
+                                        volblocksize)) != 0)
+            return (error);
+    } else if (type == DMU_OST_ZFS) {
+        int error;
 
-		if ((error = nvlist_lookup_uint64(nvprops,
-		    zfs_prop_to_name(ZFS_PROP_VOLBLOCKSIZE),
-		    &volblocksize)) != 0 && error != ENOENT)
-			return (EINVAL);
+        /*
+         * We have to have normalization and
+         * case-folding flags correct when we do the
+         * file system creation, so go figure them out
+         * now.
+         */
+        VERIFY(nvlist_alloc(&zct.zct_zplprops,
+                            NV_UNIQUE_NAME, KM_SLEEP) == 0);
+        error = zfs_fill_zplprops(fsname, nvprops,
+                                  zct.zct_zplprops, &is_insensitive);
+        if (error != 0) {
+            nvlist_free(zct.zct_zplprops);
+            return (error);
+        }
+    }
 
-		if (error != 0)
-			volblocksize = zfs_prop_default_numeric(
-			    ZFS_PROP_VOLBLOCKSIZE);
+    error = dmu_objset_create(fsname, type,
+             is_insensitive ? DS_FLAG_CI_DATASET : 0, &dcc, cbfunc, &zct);
+    nvlist_free(zct.zct_zplprops);
 
-		if ((error = zvol_check_volblocksize(
-		    volblocksize)) != 0 ||
-		    (error = zvol_check_volsize(volsize,
-		    volblocksize)) != 0)
-			return (error);
-	} else if (type == DMU_OST_ZFS) {
-		int error;
-
-		/*
-		 * We have to have normalization and
-		 * case-folding flags correct when we do the
-		 * file system creation, so go figure them out
-		 * now.
-		 */
-		VERIFY(nvlist_alloc(&zct.zct_zplprops,
-		    NV_UNIQUE_NAME, KM_SLEEP) == 0);
-		error = zfs_fill_zplprops(fsname, nvprops,
-		    zct.zct_zplprops, &is_insensitive);
-		if (error != 0) {
-			nvlist_free(zct.zct_zplprops);
-			return (error);
-		}
-<<<<<<< HEAD
-
-
-		error = dmu_objset_create(zc->zc_name, type,
-                                  is_insensitive ? DS_FLAG_CI_DATASET : 0, &dcc,
-                                  cbfunc, &zct);
-		nvlist_free(zct.zct_zplprops);
-=======
->>>>>>> upstream/master
-	}
-
-	error = dmu_objset_create(fsname, type,
-	    is_insensitive ? DS_FLAG_CI_DATASET : 0, cbfunc, &zct);
-	nvlist_free(zct.zct_zplprops);
-
-	/*
-	 * It would be nice to do this atomically.
-	 */
-	if (error == 0) {
-<<<<<<< HEAD
-		error = zfs_set_prop_nvlist(zc->zc_name, ZPROP_SRC_LOCAL,
-		    nvprops, NULL);
-
-		error = 0;
-
-=======
-		error = zfs_set_prop_nvlist(fsname, ZPROP_SRC_LOCAL,
-		    nvprops, outnvl);
->>>>>>> upstream/master
-		if (error != 0)
-			(void) dsl_destroy_head(fsname);
-	}
-<<<<<<< HEAD
-	nvlist_free(nvprops);
-
-=======
->>>>>>> upstream/master
-	return (error);
+    /*
+     * It would be nice to do this atomically.
+     */
+    if (error == 0) {
+        error = zfs_set_prop_nvlist(fsname, ZPROP_SRC_LOCAL,
+                                    nvprops, outnvl);
+        if (error != 0)
+            (void) dsl_destroy_head(fsname);
+    }
+    return (error);
 }
 
 /*
@@ -3505,6 +3449,9 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	int error = 0;
 	nvlist_t *nvprops = NULL;
 	char *origin_name;
+    dsl_crypto_ctx_t dcc = { 0 };
+    zfs_ioc_crypto_t *zic = NULL;
+    unsigned int size;
 
 	if (nvlist_lookup_string(innvl, "origin", &origin_name) != 0)
 		return (EINVAL);
@@ -3516,7 +3463,17 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 
 	if (dataset_namecheck(origin_name, NULL, NULL) != 0)
 		return (EINVAL);
-	error = dmu_objset_clone(fsname, origin_name);
+
+	if (nvlist_lookup_byte_array(innvl, "crypto_ctx", (uchar_t **)&zic,
+                                 &size) != 0)
+		return (EINVAL);
+
+    if ((size != sizeof(*zic)) ||
+        (error = zfs_get_crypto_ctx((char *)fsname, zic, &dcc)) != 0) {
+        return (error);
+    }
+
+	error = dmu_objset_clone(fsname, origin_name, &dcc);
 	if (error != 0)
 		return (error);
 
@@ -3773,72 +3730,23 @@ zfs_ioc_destroy(zfs_cmd_t *zc)
 static int
 zfs_ioc_rollback(zfs_cmd_t *zc)
 {
-	zfs_sb_t *zsb;
-<<<<<<< HEAD
-	char *clone_name;
-    dsl_crypto_ctx_t dcc = { 0 };
-    zfs_crypt_key_status_t keystatus;
+    zfs_sb_t *zsb;
+    int error;
 
-	error = dsl_dataset_hold(zc->zc_name, FTAG, &ds);
-	if (error)
-		return (error);
+    if (get_zfs_sb(zc->zc_name, &zsb) == 0) {
+        error = zfs_suspend_fs(zsb);
+        if (error == 0) {
+            int resume_err;
 
-	/* must not be a snapshot */
-	if (dsl_dataset_is_snapshot(ds)) {
-		dsl_dataset_rele(ds, FTAG);
-		return (EINVAL);
-	}
-
-	/* must have a most recent snapshot */
-	if (ds->ds_phys->ds_prev_snap_txg < TXG_INITIAL) {
-		dsl_dataset_rele(ds, FTAG);
-		return (EINVAL);
-	}
-
-    /*
-     * For encrypted datasets we need the wrapping key
-     * since rollback is implemented via cloning.
-     */
-    keystatus = dsl_dataset_keystatus(ds, B_FALSE);
-    if (keystatus == ZFS_CRYPT_KEY_UNAVAILABLE) {
-        dsl_dataset_rele(ds, FTAG);
-        return (ENOKEY);
-    } else if (keystatus == ZFS_CRYPT_KEY_AVAILABLE) {
-        dcc.dcc_wrap_key = zcrypt_key_copy(
-                                           zcrypt_keystore_find_wrappingkey(
-                                                                            dsl_dataset_get_spa(ds), ds->ds_object));
-    }
-
-    /*
-     * Create clone of most recent snapshot, passing in
-     * the wrapping key for ds if there is one.
-     */
-	clone_name = kmem_asprintf("%s/%%rollback", zc->zc_name);
-	error = dmu_objset_clone(clone_name, ds->ds_prev, &dcc, DS_FLAG_INCONSISTENT);
-	if (error)
-		goto out;
-
-	error = dsl_dataset_own(clone_name, B_TRUE, FTAG, &clone);
-	if (error)
-		goto out;
-=======
-	int error;
->>>>>>> upstream/master
-
-	if (get_zfs_sb(zc->zc_name, &zsb) == 0) {
-		error = zfs_suspend_fs(zsb);
-		if (error == 0) {
-			int resume_err;
-
-			error = dsl_dataset_rollback(zc->zc_name);
-			resume_err = zfs_resume_fs(zsb, zc->zc_name);
-			error = error ? error : resume_err;
-		}
-		deactivate_super(zsb->z_sb);
-	} else {
-		error = dsl_dataset_rollback(zc->zc_name);
-	}
-	return (error);
+            error = dsl_dataset_rollback(zc->zc_name);
+            resume_err = zfs_resume_fs(zsb, zc->zc_name);
+            error = error ? error : resume_err;
+        }
+        deactivate_super(zsb->z_sb);
+    } else {
+        error = dsl_dataset_rollback(zc->zc_name);
+        }
+    return (error);
 }
 
 static int
@@ -4557,16 +4465,12 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 	offset_t off;
 	nvlist_t *props = NULL; /* sent properties */
 	nvlist_t *origprops = NULL; /* existing properties */
-<<<<<<< HEAD
-	objset_t *origin = NULL;
     nvlist_t *cmdprops = NULL; /* props specified by 'zfs recv' */
-=======
-	char *origin = NULL;
->>>>>>> upstream/master
 	char *tosnap;
 	char tofs[ZFS_MAXNAMELEN];
 	boolean_t first_recvd_props = B_FALSE;
     dsl_crypto_ctx_t dcc = { 0 };
+	char *origin = NULL;
 
 	if (dataset_namecheck(zc->zc_value, NULL, NULL) != 0 ||
 	    strchr(zc->zc_value, '@') == NULL ||
@@ -4594,7 +4498,7 @@ zfs_ioc_recv(zfs_cmd_t *zc)
                             zc->zc_iflags, &cmdprops)) != 0)
         goto out;
 
-    if ((error = zfs_get_crypto_ctx(zc, &dcc)) != 0) {
+    if ((error = zfs_get_crypto_ctx(zc->zc_name, &zc->zc_crypto, &dcc)) != 0) {
         return (error);
     }
 
@@ -4604,7 +4508,7 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 		origin = zc->zc_string;
 
 	error = dmu_recv_begin(tofs, tosnap,
-	    &zc->zc_begin_record, force, origin, &drc);
+	    &zc->zc_begin_record, force, origin, &drc, &dcc);
 	if (error != 0)
 		goto out;
 
@@ -4639,104 +4543,8 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 			if (zfs_check_clearable(tofs, origprops, &errlist) != 0)
 				(void) nvlist_merge(errors, errlist, 0);
 			nvlist_free(errlist);
-<<<<<<< HEAD
-		}
 
-		dmu_objset_rele(os, FTAG);
-	}
-
-    props_handle_encryption(props, origprops, cmdprops, errors);
-
-    // FIXME
-#if 0
-    if (!nvlist_empty(cmdprops)) {
-        /*
-         * Try to avoid calling dmu_recv_begin() if any of the specified
-         * properties are invalid, since otherwise we are committed to
-         * calling dmu_recv_stream(). We can't validate permissions on a
-         * dataset newly created by this receive, since the dataset
-         * won't exist until after dmu_recv_begin(), so we check
-         * permissions on the containing filesystem instead. We repeat
-         * this validation when we actually set the properties.
-         */
-        nvpair_t *pair = NULL;
-        while ((pair = nvlist_next_nvpair(cmdprops, pair)) != NULL) {
-            zprop_source_t source;
-
-            /*
-             * Properties without a value (DATA_TYPE_BOOLEAN) are
-             * those specified by 'zfs receive -x' and are converted
-             * to flags in the received property nvlist by
-             * props_override(), so we don't really need to validate
-             * them here. (They will be removed from cmdprops before
-             * we set anything.) Those that do not have a
-             * corresponding pair in the received property nvlist
-             * are simply dropped, so we want to validate the
-             * specified names before that happens (simply for the
-             * sake of helpful feedback; dsl_props_set() will not
-             * see any value-less pairs from zfs_ioc_recv()).
-             * ZPROP_SRC_NONE happens to be a valid source for a
-             * property without a value.
-             */
-            source = ((nvpair_type(pair) == DATA_TYPE_BOOLEAN) ?
-                      ZPROP_SRC_NONE : ZPROP_SRC_LOCAL);
-
-            if ((error = zfs_prop_validate(pair, source)) != 0)
-                goto out;
-
-            /* validate permissions */
-            if ((error = zfs_check_settable(zc->zc_name, pair,
-                                            CRED())) != 0)
-                goto out;
-        }
-    }
-#endif
-
-    /*
-     * Do this only after validating cmdprops so we don't neglect to
-     * validate properties specified with -x, which props_override() removes
-     * from cmdprops (converting them into flags in the props nvlist).
-     */
-    // FIXME
-#if 0
-    if ((error = props_override(props, origprops, cmdprops, version,
-                                setflags)) != 0)
-        goto out;
-
-    /*
-     * Remove readonly properties from origprops so we don't try to clear
-     * them, but wait until after props_handle_encryption() since that
-     * function uses origprops to check for the encryption property.
-     */
-    if (origprops != NULL) {
-        nvlist_t *errlist = NULL;
-
-        props_filter(origprops, prop_readonly_test);
-        /*
-         * Wait until after props_override() and props_filter() so we
-         * don't check any properties that we aren't going to clear.
-         */
-        if (zfs_check_clearable(tofs, origprops,
-                                &errlist) != 0)
-            (void) nvlist_merge(errors, errlist, 0);
-        nvlist_free(errlist);
-    }
-#endif
-
-	if (zc->zc_string[0]) {
-		error = dmu_objset_hold(zc->zc_string, FTAG, &origin);
-		if (error)
-			goto out;
-	}
-
-	error = dmu_recv_begin(tofs, tosnap, zc->zc_top_ds,
-                           &zc->zc_begin_record, force, origin, &drc, &dcc);
-	if (origin)
-		dmu_objset_rele(origin, FTAG);
-	if (error)
-		goto out;
-=======
->>>>>>> upstream/master
+            props_handle_encryption(props, origprops, cmdprops, errors);
 
 			if (clear_received_props(tofs, origprops,
 			    first_recvd_props ? NULL : props) != 0)
@@ -4749,30 +4557,10 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 	if (props != NULL) {
 		props_error = dsl_prop_set_hasrecvd(tofs);
 
-<<<<<<< HEAD
-#if 0
-        /*
-         * Set local properties specified on the command line with -o
-         * and -x before setting received properties, but after setting
-         * $hasrecvd so that explicit inheritance in descendant datasets
-         * works correctly.
-         */
-        if (!nvlist_empty(cmdprops)) {
-            (void) zfs_set_prop_nvlist(tofs, ZPROP_SRC_LOCAL,
-                                       cmdprops, NULL, setflags);
-        }
-#endif
-
-		(void) zfs_set_prop_nvlist(tofs, ZPROP_SRC_RECEIVED,
-		    props, &errlist);
-		(void) nvlist_merge(errors, errlist, 0);
-		nvlist_free(errlist);
-=======
 		if (props_error == 0) {
 			(void) zfs_set_prop_nvlist(tofs, ZPROP_SRC_RECEIVED,
 			    props, errors);
 		}
->>>>>>> upstream/master
 	}
 #if 0
   else if (!nvlist_empty(cmdprops)) {
@@ -5996,154 +5784,6 @@ zfs_ioc_space_snaps(const char *lastsnap, nvlist_t *innvl, nvlist_t *outnvl)
  *
  * outnvl is unused
  */
-<<<<<<< HEAD
-static zfs_ioc_vec_t zfs_ioc_vec[] = {
-	{ zfs_ioc_pool_create, zfs_secpolicy_config, POOL_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_pool_destroy,	zfs_secpolicy_config, POOL_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_pool_import, zfs_secpolicy_config, POOL_NAME, B_TRUE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_pool_export, zfs_secpolicy_config, POOL_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_pool_configs,	zfs_secpolicy_none, NO_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_pool_stats, zfs_secpolicy_read, POOL_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_pool_tryimport, zfs_secpolicy_config, NO_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_pool_scan, zfs_secpolicy_config, POOL_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_pool_freeze, zfs_secpolicy_config, NO_NAME, B_FALSE,
-	    POOL_CHECK_READONLY },
-	{ zfs_ioc_pool_upgrade,	zfs_secpolicy_config, POOL_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_pool_get_history, zfs_secpolicy_config, POOL_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_vdev_add, zfs_secpolicy_config, POOL_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_vdev_remove, zfs_secpolicy_config, POOL_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_vdev_set_state, zfs_secpolicy_config,	POOL_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_vdev_attach, zfs_secpolicy_config, POOL_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_vdev_detach, zfs_secpolicy_config, POOL_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_vdev_setpath,	zfs_secpolicy_config, POOL_NAME, B_FALSE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_vdev_setfru,	zfs_secpolicy_config, POOL_NAME, B_FALSE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_objset_stats,	zfs_secpolicy_read, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_SUSPENDED },
-	{ zfs_ioc_objset_zplprops, zfs_secpolicy_read, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_dataset_list_next, zfs_secpolicy_read, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_SUSPENDED },
-	{ zfs_ioc_snapshot_list_next, zfs_secpolicy_read, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_SUSPENDED },
-	{ zfs_ioc_set_prop, zfs_secpolicy_none, DATASET_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_create_minor, zfs_secpolicy_config, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_remove_minor, zfs_secpolicy_config, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_create, zfs_secpolicy_create, DATASET_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_destroy, zfs_secpolicy_destroy, DATASET_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_rollback, zfs_secpolicy_rollback, DATASET_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_rename, zfs_secpolicy_rename,	DATASET_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_recv, zfs_secpolicy_receive, DATASET_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_send, zfs_secpolicy_send, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_inject_fault,	zfs_secpolicy_inject, NO_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_clear_fault, zfs_secpolicy_inject, NO_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_inject_list_next, zfs_secpolicy_inject, NO_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_error_log, zfs_secpolicy_inject, POOL_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_clear, zfs_secpolicy_config, POOL_NAME, B_TRUE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_promote, zfs_secpolicy_promote, DATASET_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_destroy_snaps_nvl, zfs_secpolicy_destroy_recursive,
-	    DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_snapshot, zfs_secpolicy_snapshot, DATASET_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_dsobj_to_dsname, zfs_secpolicy_diff, POOL_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_obj_to_path, zfs_secpolicy_diff, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_SUSPENDED },
-	{ zfs_ioc_pool_set_props, zfs_secpolicy_config,	POOL_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_pool_get_props, zfs_secpolicy_read, POOL_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_set_fsacl, zfs_secpolicy_fsacl, DATASET_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_get_fsacl, zfs_secpolicy_read, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_share, zfs_secpolicy_share, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_inherit_prop, zfs_secpolicy_inherit, DATASET_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_smb_acl, zfs_secpolicy_smb_acl, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_userspace_one, zfs_secpolicy_userspace_one, DATASET_NAME,
-	    B_FALSE, POOL_CHECK_NONE },
-	{ zfs_ioc_userspace_many, zfs_secpolicy_userspace_many, DATASET_NAME,
-	    B_FALSE, POOL_CHECK_NONE },
-	{ zfs_ioc_userspace_upgrade, zfs_secpolicy_userspace_upgrade,
-	    DATASET_NAME, B_FALSE, POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_hold, zfs_secpolicy_hold, DATASET_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_release, zfs_secpolicy_release, DATASET_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_get_holds, zfs_secpolicy_read, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_SUSPENDED },
-	{ zfs_ioc_objset_recvd_props, zfs_secpolicy_read, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_vdev_split, zfs_secpolicy_config, POOL_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_next_obj, zfs_secpolicy_read, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_diff, zfs_secpolicy_diff, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_tmp_snapshot, zfs_secpolicy_tmp_snapshot, DATASET_NAME,
-	    B_FALSE, POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_obj_to_stats, zfs_secpolicy_diff, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_SUSPENDED },
-    { zfs_ioc_crypto_key_load, zfs_secpolicy_crypto_keyuse,
-      DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED },
-    { zfs_ioc_crypto_key_unload, zfs_secpolicy_crypto_keyuse,
-      DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED },
-    { zfs_ioc_crypto_key_inherit, zfs_secpolicy_crypto_keyuse,
-      DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED },
-    { zfs_ioc_crypto_key_change, zfs_secpolicy_crypto_keychange,
-      DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-    { zfs_ioc_crypto_key_new, zfs_secpolicy_crypto_keychange,
-      DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_events_next, zfs_secpolicy_config, NO_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_events_clear, zfs_secpolicy_config, NO_NAME, B_FALSE,
-	    POOL_CHECK_NONE },
-	{ zfs_ioc_pool_reguid, zfs_secpolicy_config, POOL_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY },
-	{ zfs_ioc_space_written, zfs_secpolicy_read, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_SUSPENDED },
-	{ zfs_ioc_space_snaps, zfs_secpolicy_read, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_SUSPENDED },
-	{ zfs_ioc_pool_reopen, zfs_secpolicy_config, POOL_NAME, B_TRUE,
-	    POOL_CHECK_SUSPENDED },
-	{ zfs_ioc_send_progress, zfs_secpolicy_read, DATASET_NAME, B_FALSE,
-	    POOL_CHECK_NONE }
-};
-=======
 /* ARGSUSED */
 static int
 zfs_ioc_send_new(const char *snapname, nvlist_t *innvl, nvlist_t *outnvl)
@@ -6523,8 +6163,23 @@ zfs_ioctl_init(void)
 	    zfs_secpolicy_config, NO_NAME, B_FALSE, POOL_CHECK_NONE);
 	zfs_ioctl_register_legacy(ZFS_IOC_EVENTS_CLEAR, zfs_ioc_events_clear,
 	    zfs_secpolicy_config, NO_NAME, B_FALSE, POOL_CHECK_NONE);
+
+    /*
+     * Encryption functions
+     */
+	zfs_ioctl_register_legacy(ZFS_IOC_CRYPTO_KEY_LOAD, zfs_ioc_crypto_key_load,
+      zfs_secpolicy_crypto_keyuse, DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED);
+	zfs_ioctl_register_legacy(ZFS_IOC_CRYPTO_KEY_UNLOAD, zfs_ioc_crypto_key_unload,
+      zfs_secpolicy_crypto_keyuse, DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED);
+	zfs_ioctl_register_legacy(ZFS_IOC_CRYPTO_KEY_INHERIT, zfs_ioc_crypto_key_inherit,
+      zfs_secpolicy_crypto_keyuse, DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED);
+	zfs_ioctl_register_legacy(ZFS_IOC_CRYPTO_KEY_CHANGE, zfs_ioc_crypto_key_change,
+      zfs_secpolicy_crypto_keychange, DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY);
+	zfs_ioctl_register_legacy(ZFS_IOC_CRYPTO_KEY_NEW, zfs_ioc_crypto_key_new,
+      zfs_secpolicy_crypto_keychange, DATASET_NAME, B_TRUE, POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY);
+
 }
->>>>>>> upstream/master
+
 
 int
 pool_status_check(const char *name, zfs_ioc_namecheck_t type,

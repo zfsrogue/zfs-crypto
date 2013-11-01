@@ -193,20 +193,11 @@ void dsl_register_onexit_hold_cleanup(dsl_dataset_t *ds, const char *htag,
 uint64_t dsl_dataset_create_sync(dsl_dir_t *pds, const char *lastname,
     dsl_dataset_t *origin, struct dsl_crypto_ctx *dcc, uint64_t flags, cred_t *, dmu_tx_t *);
 uint64_t dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
-<<<<<<< HEAD
     struct dsl_crypto_ctx *dcc, uint64_t flags, dmu_tx_t *tx);
 int dsl_dataset_destroy(dsl_dataset_t *ds, void *tag, boolean_t defer);
 int dsl_snapshots_destroy(char *fsname, char *snapname, boolean_t defer);
-dsl_checkfunc_t dsl_dataset_destroy_check;
-dsl_syncfunc_t dsl_dataset_destroy_sync;
-dsl_checkfunc_t dsl_dataset_snapshot_check;
-dsl_syncfunc_t dsl_dataset_snapshot_sync;
-dsl_syncfunc_t dsl_dataset_user_hold_sync;
 int dsl_dataset_rename(char *name, const char *newname, boolean_t recursive);
-=======
-    uint64_t flags, dmu_tx_t *tx);
 int dsl_dataset_snapshot(nvlist_t *snaps, nvlist_t *props, nvlist_t *errors);
->>>>>>> upstream/master
 int dsl_dataset_promote(const char *name, char *conflsnap);
 int dsl_dataset_rename_snapshot(const char *fsname,
     const char *oldsnapname, const char *newsnapname, boolean_t recursive);

@@ -500,13 +500,8 @@ spa_prop_validate(spa_t *spa, nvlist_t *props)
 				} else if ((error =
 				    dsl_prop_get_int_ds(dmu_objset_ds(os),
 				    zfs_prop_to_name(ZFS_PROP_COMPRESSION),
-<<<<<<< HEAD
-				    &compress, NULL)) == 0 &&
-				    !BOOTFS_COMPRESS_VALID(compress))
-=======
 				    &compress)) == 0 &&
-				    !BOOTFS_COMPRESS_VALID(compress)) {
->>>>>>> upstream/master
+				    !BOOTFS_COMPRESS_VALID(compress))
 					error = ENOTSUP;
 
                 if (!error) {
@@ -3421,11 +3416,7 @@ spa_l2cache_drop(spa_t *spa)
  */
 int
 spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
-<<<<<<< HEAD
     const char *history_str, struct dsl_crypto_ctx *dcc, nvlist_t *zplprops)
-=======
-    nvlist_t *zplprops)
->>>>>>> upstream/master
 {
 	spa_t *spa;
 	char *altroot = NULL;
