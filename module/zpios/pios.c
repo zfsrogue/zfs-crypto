@@ -35,6 +35,7 @@
 #include <sys/dmu.h>
 #include <sys/dmu_objset.h>
 #include <sys/txg.h>
+#include <sys/dsl_destroy.h>
 #include <linux/cdev.h>
 #include "zpios-internal.h"
 
@@ -225,9 +226,9 @@ zpios_dmu_setup(run_args_t *run_args)
 	run_args->os = os;
 out_destroy:
 	if (rc) {
-		rc2 = dmu_objset_destroy(name, B_FALSE);
+		rc2 = dsl_destroy_head(name);
 		if (rc2)
-			zpios_print(run_args->file, "Error dmu_objset_destroy"
+			zpios_print(run_args->file, "Error dsl_destroy_head"
 				    "(%s, ...) failed: %d\n", name, rc2);
 	}
 out:
@@ -396,9 +397,9 @@ zpios_remove_objset(run_args_t *run_args)
 	dmu_objset_disown(run_args->os, zpios_tag);
 
 	if (run_args->flags & DMU_REMOVE) {
-		rc = dmu_objset_destroy(name, B_FALSE);
+		rc = dsl_destroy_head(name);
 		if (rc)
-			zpios_print(run_args->file, "Error dmu_objset_destroy"
+			zpios_print(run_args->file, "Error dsl_destroy_head"
 				    "(%s, ...) failed: %d\n", name, rc);
 	}
 

@@ -48,6 +48,7 @@
 #include <sys/metaslab_impl.h>
 #include <sys/arc.h>
 #include <sys/ddt.h>
+#include <sys/kstat.h>
 #include "zfs_prop.h"
 #include "zfeature_common.h"
 
@@ -253,7 +254,6 @@ unsigned long zfs_deadman_synctime = 1000ULL;
  */
 int zfs_deadman_enabled = 1;
 
-
 /*
  * ==========================================================================
  * SPA config locking
@@ -268,7 +268,7 @@ spa_config_lock_init(spa_t *spa)
 		spa_config_lock_t *scl = &spa->spa_config_lock[i];
 		mutex_init(&scl->scl_lock, NULL, MUTEX_DEFAULT, NULL);
 		cv_init(&scl->scl_cv, NULL, CV_DEFAULT, NULL);
-		refcount_create(&scl->scl_count);
+		refcount_create_untracked(&scl->scl_count);
 		scl->scl_writer = NULL;
 		scl->scl_write_wanted = 0;
 	}
@@ -325,6 +325,8 @@ spa_config_enter(spa_t *spa, int locks, void *tag, krw_t rw)
 {
 	int wlocks_held = 0;
 	int i;
+
+	ASSERT3U(SCL_LOCKS, <, sizeof (wlocks_held) * NBBY);
 
 	for (i = 0; i < SCL_LOCKS; i++) {
 		spa_config_lock_t *scl = &spa->spa_config_lock[i];
@@ -406,26 +408,21 @@ spa_lookup(const char *name)
 	static spa_t search;	/* spa_t is large; don't allocate on stack */
 	spa_t *spa;
 	avl_index_t where;
-	char c = 0;
 	char *cp;
 
 	ASSERT(MUTEX_HELD(&spa_namespace_lock));
+
+	(void) strlcpy(search.spa_name, name, sizeof (search.spa_name));
 
 	/*
 	 * If it's a full dataset name, figure out the pool name and
 	 * just use that.
 	 */
-	cp = strpbrk(name, "/@");
-	if (cp) {
-		c = *cp;
+	cp = strpbrk(search.spa_name, "/@");
+	if (cp != NULL)
 		*cp = '\0';
-	}
 
-	(void) strlcpy(search.spa_name, name, sizeof (search.spa_name));
 	spa = avl_find(&spa_namespace_avl, &search, &where);
-
-	if (cp)
-		*cp = c;
 
 	return (spa);
 }
@@ -447,7 +444,7 @@ spa_deadman(void *arg)
 		vdev_deadman(spa->spa_root_vdev);
 
 	spa->spa_deadman_tqid = taskq_dispatch_delay(system_taskq,
-	    spa_deadman, spa, TQ_SLEEP, ddi_get_lbolt() +
+	    spa_deadman, spa, TQ_PUSHPAGE, ddi_get_lbolt() +
 	    NSEC_TO_TICK(spa->spa_deadman_synctime));
 }
 
@@ -498,6 +495,7 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 
 	refcount_create(&spa->spa_refcount);
 	spa_config_lock_init(spa);
+	spa_stats_init(spa);
 
 	avl_add(&spa_namespace_avl, spa);
 
@@ -538,6 +536,8 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 		VERIFY(nvlist_alloc(&spa->spa_label_features, NV_UNIQUE_NAME,
 		    KM_SLEEP) == 0);
 	}
+
+	spa->spa_debug = ((zfs_flags & ZFS_DEBUG_SPA) != 0);
 
 	return (spa);
 }
@@ -581,6 +581,7 @@ spa_remove(spa_t *spa)
 
 	refcount_destroy(&spa->spa_refcount);
 
+	spa_stats_destroy(spa);
 	spa_config_lock_destroy(spa);
 
 	for (t = 0; t < TXG_SIZE; t++)

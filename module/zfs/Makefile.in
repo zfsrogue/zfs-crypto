@@ -8,6 +8,7 @@ $(MODULE)-objs += @top_srcdir@/module/zfs/arc.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/bplist.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/bpobj.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/dbuf.o
+$(MODULE)-objs += @top_srcdir@/module/zfs/dbuf_stats.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/bptree.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/ddt.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/ddt_zap.o
@@ -45,6 +46,7 @@ $(MODULE)-objs += @top_srcdir@/module/zfs/spa_config.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/spa_errlog.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/spa_history.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/spa_misc.o
+$(MODULE)-objs += @top_srcdir@/module/zfs/spa_stats.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/space_map.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/txg.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/uberblock.o
@@ -96,4 +98,9 @@ $(MODULE)-objs += @top_srcdir@/module/zfs/zpl_super.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/zpl_xattr.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/zrlock.o
 $(MODULE)-objs += @top_srcdir@/module/zfs/zvol.o
+<<<<<<< HEAD
 $(MODULE)-objs += @top_srcdir@/module/zcommon/zcrypt_common.o
+=======
+$(MODULE)-objs += @top_srcdir@/module/zfs/dsl_destroy.o
+$(MODULE)-objs += @top_srcdir@/module/zfs/dsl_userhold.o
+>>>>>>> upstream/master

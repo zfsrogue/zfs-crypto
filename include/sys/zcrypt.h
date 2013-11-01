@@ -161,8 +161,8 @@ typedef struct zfs_ioc_crypt {
 	uint64_t		zic_crypt;
 	uint64_t		zic_clone_newkey;
 	uint64_t		zic_keydatalen;
-	char			zic_keydata[ZFS_IOC_MAXKEYLEN];
-	char			zic_inherit_dsname[MAXNAMELEN];
+	unsigned char	zic_keydata[ZFS_IOC_MAXKEYLEN];
+	unsigned char	zic_inherit_dsname[MAXNAMELEN];
 	uint64_t		zic_salt;
 } zfs_ioc_crypto_t;
 

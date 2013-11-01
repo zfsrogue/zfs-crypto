@@ -650,18 +650,18 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 		return (EAGAIN);
 	}
 
-#ifdef HAVE_UIO_ZEROCOPY
 	/*
 	 * Pre-fault the pages to ensure slow (eg NFS) pages
 	 * don't hold up txg.
 	 * Skip this if uio contains loaned arc_buf.
 	 */
+#ifdef HAVE_UIO_ZEROCOPY
 	if ((uio->uio_extflg == UIO_XUIO) &&
 	    (((xuio_t *)uio)->xu_type == UIOTYPE_ZEROCOPY))
 		xuio = (xuio_t *)uio;
 	else
+#endif
 		uio_prefaultpages(MIN(n, max_blksz), uio);
-#endif /* HAVE_UIO_ZEROCOPY */
 
 	/*
 	 * If in append mode, set the io offset pointer to eof.
@@ -2004,12 +2004,12 @@ zfs_readdir(struct inode *ip, struct dir_context *ctx, cred_t *cr)
 	objset_t	*os;
 	zap_cursor_t	zc;
 	zap_attribute_t	zap;
-	int		outcount;
 	int		error;
 	uint8_t		prefetch;
+	uint8_t		type;
 	int		done = 0;
 	uint64_t	parent;
-	loff_t		*pos = &(ctx->pos);
+	uint64_t	offset; /* must be unsigned; checks for < 1 */
 
 	ZFS_ENTER(zsb);
 	ZFS_VERIFY_ZP(zp);
@@ -2021,17 +2021,18 @@ zfs_readdir(struct inode *ip, struct dir_context *ctx, cred_t *cr)
 	/*
 	 * Quit if directory has been removed (posix)
 	 */
-	error = 0;
 	if (zp->z_unlinked)
 		goto out;
 
+	error = 0;
 	os = zsb->z_os;
+	offset = ctx->pos;
 	prefetch = zp->z_zn_prefetch;
 
 	/*
 	 * Initialize the iterator cursor.
 	 */
-	if (*pos <= 3) {
+	if (offset <= 3) {
 		/*
 		 * Start iteration from the beginning of the directory.
 		 */
@@ -2040,31 +2041,32 @@ zfs_readdir(struct inode *ip, struct dir_context *ctx, cred_t *cr)
 		/*
 		 * The offset is a serialized cursor.
 		 */
-		zap_cursor_init_serialized(&zc, os, zp->z_id, *pos);
+		zap_cursor_init_serialized(&zc, os, zp->z_id, offset);
 	}
 
 	/*
 	 * Transform to file-system independent format
 	 */
-	outcount = 0;
-
 	while (!done) {
 		uint64_t objnum;
 		/*
 		 * Special case `.', `..', and `.zfs'.
 		 */
-		if (*pos == 0) {
+		if (offset == 0) {
 			(void) strcpy(zap.za_name, ".");
 			zap.za_normalization_conflict = 0;
 			objnum = zp->z_id;
-		} else if (*pos == 1) {
+			type = DT_DIR;
+		} else if (offset == 1) {
 			(void) strcpy(zap.za_name, "..");
 			zap.za_normalization_conflict = 0;
 			objnum = parent;
-		} else if (*pos == 2 && zfs_show_ctldir(zp)) {
+			type = DT_DIR;
+		} else if (offset == 2 && zfs_show_ctldir(zp)) {
 			(void) strcpy(zap.za_name, ZFS_CTLDIR_NAME);
 			zap.za_normalization_conflict = 0;
 			objnum = ZFSCTL_INO_ROOT;
+			type = DT_DIR;
 		} else {
 			/*
 			 * Grab next entry.
@@ -2089,7 +2091,7 @@ zfs_readdir(struct inode *ip, struct dir_context *ctx, cred_t *cr)
 				    "entry, obj = %lld, offset = %lld, "
 				    "length = %d, num = %lld\n",
 				    (u_longlong_t)zp->z_id,
-				    (u_longlong_t)*pos,
+				    (u_longlong_t)offset,
 				    zap.za_integer_length,
 				    (u_longlong_t)zap.za_num_integers);
 				error = ENXIO;
@@ -2097,10 +2099,11 @@ zfs_readdir(struct inode *ip, struct dir_context *ctx, cred_t *cr)
 			}
 
 			objnum = ZFS_DIRENT_OBJ(zap.za_first_integer);
+			type = ZFS_DIRENT_TYPE(zap.za_first_integer);
 		}
 
 		done = !dir_emit(ctx, zap.za_name, strlen(zap.za_name),
-		    objnum, ZFS_DIRENT_TYPE(zap.za_first_integer));
+		    objnum, type);
 		if (done)
 			break;
 
@@ -2109,12 +2112,16 @@ zfs_readdir(struct inode *ip, struct dir_context *ctx, cred_t *cr)
 			dmu_prefetch(os, objnum, 0, 0);
 		}
 
-		if (*pos > 2 || (*pos == 2 && !zfs_show_ctldir(zp))) {
+		/*
+		 * Move to the next entry, fill in the previous offset.
+		 */
+		if (offset > 2 || (offset == 2 && !zfs_show_ctldir(zp))) {
 			zap_cursor_advance(&zc);
-			*pos = zap_cursor_serialize(&zc);
+			offset = zap_cursor_serialize(&zc);
 		} else {
-			(*pos)++;
+			offset += 1;
 		}
+		ctx->pos = offset;
 	}
 	zp->z_zn_prefetch = B_FALSE; /* a lookup will re-enable pre-fetching */
 
@@ -3964,7 +3971,7 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc)
 
 /*
  * Update the system attributes when the inode has been dirtied.  For the
- * moment we're conservative and only update the atime, mtime, and ctime.
+ * moment we only update the mode, atime, mtime, and ctime.
  */
 int
 zfs_dirty_inode(struct inode *ip, int flags)
@@ -3972,8 +3979,8 @@ zfs_dirty_inode(struct inode *ip, int flags)
 	znode_t		*zp = ITOZ(ip);
 	zfs_sb_t	*zsb = ITOZSB(ip);
 	dmu_tx_t	*tx;
-	uint64_t	atime[2], mtime[2], ctime[2];
-	sa_bulk_attr_t	bulk[3];
+	uint64_t	mode, atime[2], mtime[2], ctime[2];
+	sa_bulk_attr_t	bulk[4];
 	int		error;
 	int		cnt = 0;
 
@@ -3992,14 +3999,18 @@ zfs_dirty_inode(struct inode *ip, int flags)
 	}
 
 	mutex_enter(&zp->z_lock);
+	SA_ADD_BULK_ATTR(bulk, cnt, SA_ZPL_MODE(zsb), NULL, &mode, 8);
 	SA_ADD_BULK_ATTR(bulk, cnt, SA_ZPL_ATIME(zsb), NULL, &atime, 16);
 	SA_ADD_BULK_ATTR(bulk, cnt, SA_ZPL_MTIME(zsb), NULL, &mtime, 16);
 	SA_ADD_BULK_ATTR(bulk, cnt, SA_ZPL_CTIME(zsb), NULL, &ctime, 16);
 
-	/* Preserve the mtime and ctime provided by the inode */
+	/* Preserve the mode, mtime and ctime provided by the inode */
 	ZFS_TIME_ENCODE(&ip->i_atime, atime);
 	ZFS_TIME_ENCODE(&ip->i_mtime, mtime);
 	ZFS_TIME_ENCODE(&ip->i_ctime, ctime);
+	mode = ip->i_mode;
+
+	zp->z_mode = mode;
 	zp->z_atime_dirty = 0;
 
 	error = sa_bulk_update(zp->z_sa_hdl, bulk, cnt, tx);

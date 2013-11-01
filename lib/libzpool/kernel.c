@@ -34,6 +34,7 @@
 #include <sys/stat.h>
 #include <sys/processor.h>
 #include <sys/zfs_context.h>
+#include <sys/rrwlock.h>
 #include <sys/utsname.h>
 #include <sys/time.h>
 #include <sys/systeminfo.h>
@@ -237,6 +238,14 @@ kstat_install(kstat_t *ksp)
 /*ARGSUSED*/
 void
 kstat_delete(kstat_t *ksp)
+{}
+
+/*ARGSUSED*/
+void
+kstat_set_raw_ops(kstat_t *ksp,
+    int (*headers)(char *buf, size_t size),
+    int (*data)(char *buf, size_t size, void *data),
+    void *(*addr)(kstat_t *ksp, loff_t index))
 {}
 
 /*
@@ -1042,6 +1051,8 @@ umem_out_of_memory(void)
 void
 kernel_init(int mode)
 {
+	extern uint_t rrw_tsd_key;
+
 	umem_nofail_callback(umem_out_of_memory);
 
 	physmem = sysconf(_SC_PHYS_PAGES);
@@ -1059,6 +1070,8 @@ kernel_init(int mode)
 	system_taskq_init();
 
 	spa_init(mode);
+
+	tsd_create(&rrw_tsd_key, rrw_tsd_destroy);
 }
 
 void
@@ -1078,6 +1091,12 @@ kernel_fini(void)
 
 uid_t
 crgetuid(cred_t *cr)
+{
+	return (0);
+}
+
+uid_t
+crgetruid(cred_t *cr)
 {
 	return (0);
 }

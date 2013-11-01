@@ -50,7 +50,7 @@ int dsl_crypto_key_clone(dsl_dir_t *dd, dsl_dataset_phys_t *dsphys,
 
 zfs_crypt_key_status_t dsl_dataset_keystatus(dsl_dataset_t *ds,
     boolean_t dp_config_rwlock_held);
-int dsl_dataset_keystatus_byname(const char *dsname,
+int dsl_dataset_keystatus_byname(dsl_pool_t *dp, const char *dsname,
     zfs_crypt_key_status_t *keystatus);
 
 int dsl_crypto_key_load(const char *dsname, zcrypt_key_t *wrappingkey);

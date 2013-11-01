@@ -662,10 +662,10 @@ zcrypt_keystore_find_node(spa_t *spa, uint64_t dsobj,
 		rw_exit(&spa->spa_keystore->sk_lock);
 		need_lock = !dsl_pool_sync_context(dp) && !config_rwlock_held;
 		if (need_lock)
-			rw_enter(&dp->dp_config_rwlock, RW_READER);
+			rrw_enter(&dp->dp_config_rwlock, RW_READER, FTAG);
 		error = dsl_dataset_hold_obj(dp, dsobj, FTAG, &ds);
 		if (need_lock)
-			rw_exit(&dp->dp_config_rwlock);
+			rrw_exit(&dp->dp_config_rwlock, FTAG);
 		rw_enter(&spa->spa_keystore->sk_lock, RW_READER);
 
 		if (!error) {
@@ -872,7 +872,7 @@ zcrypt_key_gen(int crypt)
 boolean_t
 zcrypt_mech_available(enum zio_crypt crypt)
 {
-	crypto_mech_type_t mech;
+	crypto_mech_type_t mech = 0;
 
 	if (crypt == ZIO_CRYPT_INHERIT || crypt == ZIO_CRYPT_OFF)
 		return (TRUE);

@@ -199,7 +199,7 @@ keysource_prop_parser(char *prop_value, key_format_t *format,
 }
 
 static void
-zfs_cmd_target_dsname(zfs_cmd_t *zc, zfs_crypto_zckey_t cmd,
+zfs_cmd_target_dsname(char *zc_name, char *zc_value, zfs_crypto_zckey_t cmd,
     char *dsname, size_t dsnamelen)
 {
 	int at;
@@ -211,14 +211,14 @@ zfs_cmd_target_dsname(zfs_cmd_t *zc, zfs_crypto_zckey_t cmd,
 	 * name of the dataset getting created.
 	 */
 	if (cmd == ZFS_CRYPTO_RECV) {
-		at = strcspn(zc->zc_value, "@");
-		(void) strlcpy(dsname, zc->zc_value,
+		at = strcspn(zc_value, "@");
+		(void) strlcpy(dsname, zc_value,
 		    MIN(at + 1, dsnamelen));
 		if (strlen(dsname) == 0) {
-			(void) strlcpy(dsname, zc->zc_name, dsnamelen);
+			(void) strlcpy(dsname, zc_name, dsnamelen);
 		}
 	} else {
-		(void) strlcpy(dsname, zc->zc_name, dsnamelen);
+		(void) strlcpy(dsname, zc_name, dsnamelen);
 	}
 }
 
@@ -346,18 +346,18 @@ hexstr_to_bytes(char *hexstr, size_t hexlen, uchar_t **bytes, size_t *blen)
 
 static int
 get_passphrase(libzfs_handle_t *hdl, char **passphrase,
-    size_t *passphraselen, key_format_t format, zfs_cmd_t *zc,
-    zfs_crypto_zckey_t cmd)
+    size_t *passphraselen, key_format_t format, char *zc_name, char *zc_value,
+    zfs_ioc_crypto_t *zic, zfs_crypto_zckey_t cmd)
 {
 	char prompt[MAXPROMPTLEN];
 	char *tmpbuf = NULL;
 	int min_psize = 8;
 	char dsname[MAXNAMELEN];
 
-	zfs_cmd_target_dsname(zc, cmd, dsname, sizeof (dsname));
+	zfs_cmd_target_dsname(zc_name, zc_value, cmd, dsname, sizeof (dsname));
 	if (format == KEY_FORMAT_HEX) {
 		min_psize = 2 *
-		    zio_crypt_table[zc->zc_crypto.zic_crypt].ci_keylen;
+		    zio_crypt_table[zic->zic_crypt].ci_keylen;
 		if (hdl->libzfs_crypt.zc_is_key_change) {
 			(void) snprintf(prompt, MAXPROMPTLEN, "%s \'%s\': ",
 			    dgettext(TEXT_DOMAIN,
@@ -646,7 +646,8 @@ get_keydata_curl(void *ptr, size_t size, size_t nmemb, void *arg)
 
 static int
 key_hdl_to_zc(libzfs_handle_t *hdl, zfs_handle_t *zhp, char *keysource,
-    int crypt, zfs_cmd_t *zc, zfs_crypto_zckey_t cmd)
+              int crypt, char *zc_name, char *zc_value, zfs_ioc_crypto_t *zic,
+              zfs_crypto_zckey_t cmd)
 {
     //	CK_SESSION_HANDLE session;
 	int ret = 0;
@@ -662,7 +663,7 @@ key_hdl_to_zc(libzfs_handle_t *hdl, zfs_handle_t *zhp, char *keysource,
 	uint64_t salt;
 	struct cb_arg_curl cb_curl = { 0 };
 
-	zc->zc_crypto.zic_clone_newkey = hdl->libzfs_crypt.zc_clone_newkey;
+	zic->zic_clone_newkey = hdl->libzfs_crypt.zc_clone_newkey;
 
 	if (!keysource_prop_parser(keysource, &format, &locator, &uri)) {
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
@@ -712,7 +713,7 @@ key_hdl_to_zc(libzfs_handle_t *hdl, zfs_handle_t *zhp, char *keysource,
 			do {
 				/* get_passphrase allocates keydata */
 				ret = get_passphrase(hdl, &keydata,
-				    &keydatalen, format, zc, cmd);
+				    &keydatalen, format, zc_name, zc_value, zic, cmd);
 			} while (ret != 0 && ++tries < 3);
 			if (ret)
 				return (-1);
@@ -818,9 +819,9 @@ format_key:
 	 */
 	switch (format) {
 	case KEY_FORMAT_RAW:
-		bcopy(keydata, zc->zc_crypto.zic_keydata, keydatalen);
-		zc->zc_crypto.zic_keydatalen = keydatalen;
-		zc->zc_crypto.zic_salt = 0;
+        bcopy(keydata, zic->zic_keydata, keydatalen);
+        zic->zic_keydatalen = keydatalen;
+        zic->zic_salt = 0;
 
 		tmpkeydata = strdup(keydata);
 		tmpkeydatalen = keydatalen;
@@ -852,11 +853,11 @@ format_key:
 			goto out;
 		}
 
-		bcopy(tmpkeydata, zc->zc_crypto.zic_keydata, tmpkeydatalen);
+        bcopy(tmpkeydata, zic->zic_keydata, tmpkeydatalen);
 		bzero(tmpkeydata, tmpkeydatalen);
 		free(tmpkeydata);
-		zc->zc_crypto.zic_keydatalen = tmpkeydatalen;
-		zc->zc_crypto.zic_salt = 0;
+        zic->zic_keydatalen = tmpkeydatalen;
+        zic->zic_salt = 0;
 		break;
 	case KEY_FORMAT_PASSPHRASE:
 		/* Remove any extra linefeed that may be on the end */
@@ -938,28 +939,28 @@ format_key:
                         (void *)&salt, sizeof(salt),
                         keylen, (void **)&tmpkeydata, &tmpkeydatalen);
 
-		bcopy(tmpkeydata, zc->zc_crypto.zic_keydata, tmpkeydatalen);
+		bcopy(tmpkeydata, zic->zic_keydata, tmpkeydatalen);
 		bzero(tmpkeydata, tmpkeydatalen);
 		free(tmpkeydata);
-		zc->zc_crypto.zic_keydatalen = tmpkeydatalen;
-		zc->zc_crypto.zic_salt = salt;
+		zic->zic_keydatalen = tmpkeydatalen;
+        zic->zic_salt = salt;
 		break;
 
 	default:
 		ASSERT(format);
 	}
 
-	if (zc->zc_crypto.zic_keydatalen != keylen) {
+	if (zic->zic_keydatalen != keylen) {
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 		    "key length invalid. expected %lu bytes have %lu"),
-		    keylen, zc->zc_crypto.zic_keydatalen);
+		    keylen, zic->zic_keydatalen);
 		errno = EIO;
 		ret = -1;
 	}
 
     if (tmpkeydatalen) // Only decrease if NOT zero.
         tmpkeydatalen--;
-	while (zc->zc_crypto.zic_keydata[tmpkeydatalen] == 0 &&
+	while (zic->zic_keydata[tmpkeydatalen] == 0 &&
 	    tmpkeydatalen > 0)
 		tmpkeydatalen--;
 
@@ -1058,15 +1059,16 @@ zfs_key_load(zfs_handle_t *zhp, boolean_t mount, boolean_t share,
 	 */
 	if (propsrctype == ZPROP_SRC_INHERITED &&
 	    keystatus == ZFS_CRYPT_KEY_AVAILABLE) {
-		(void) strlcpy(zc.zc_crypto.zic_inherit_dsname, source,
-		    sizeof (zc.zc_crypto.zic_inherit_dsname));
+		(void) strlcpy((char *)zc.zc_crypto.zic_inherit_dsname, source,
+                       sizeof ((char *)zc.zc_crypto.zic_inherit_dsname));
 		ret = zfs_ioctl(zhp->zfs_hdl, ZFS_IOC_CRYPTO_KEY_INHERIT, &zc);
 		goto out;
 	}
 
 	zc.zc_crypto.zic_crypt = crypt;
 
-	ret = key_hdl_to_zc(zhp->zfs_hdl, zhp, keysource, crypt, &zc,
+	ret = key_hdl_to_zc(zhp->zfs_hdl, zhp, keysource, crypt,  zc.zc_name,
+        zc.zc_value, &zc.zc_crypto,
 	    ZFS_CRYPTO_KEY_LOAD);
 	if (ret != 0) {
 		if (errno == ENOTTY)
@@ -1258,7 +1260,8 @@ zfs_key_change(zfs_handle_t *zhp, boolean_t recursing, nvlist_t *props)
 		goto error;
 	}
 
-	ret = key_hdl_to_zc(zhp->zfs_hdl, zhp, keysource, crypt, &zc,
+	ret = key_hdl_to_zc(zhp->zfs_hdl, zhp, keysource, crypt,  zc.zc_name,
+        zc.zc_value, &zc.zc_crypto,
 	    ZFS_CRYPTO_KEY_CHANGE);
 	if (props != NULL) {
 		if (zcmd_write_src_nvlist(zhp->zfs_hdl, &zc, props) != 0)
@@ -1342,7 +1345,8 @@ zfs_valid_keysource(char *keysource)
  */
 int
 zfs_crypto_zckey(libzfs_handle_t *hdl, zfs_crypto_zckey_t cmd,
-                 nvlist_t *props, zfs_cmd_t *zc, zfs_type_t type)
+                 nvlist_t *props,  char *zc_name, char *zc_value,
+                 zfs_ioc_crypto_t *zic, zfs_type_t type)
 {
 	uint64_t crypt = ZIO_CRYPT_INHERIT, pcrypt = ZIO_CRYPT_DEFAULT;
 	char *keysource = NULL;
@@ -1360,8 +1364,9 @@ zfs_crypto_zckey(libzfs_handle_t *hdl, zfs_crypto_zckey_t cmd,
 	char target[MAXNAMELEN];
 	char parent[MAXNAMELEN];
 	char *strval;
+    char zc_string[MAXNAMELEN];
 
-	zfs_cmd_target_dsname(zc, cmd, target, sizeof (target));
+	zfs_cmd_target_dsname(zc_name, zc_value, cmd, target, sizeof (target));
 	if (zfs_parent_name(target, parent, sizeof (parent)) != 0)
 		parent[0] = '\0';
 	(void) snprintf(errbuf, sizeof (errbuf), dgettext(TEXT_DOMAIN,
@@ -1388,7 +1393,7 @@ zfs_crypto_zckey(libzfs_handle_t *hdl, zfs_crypto_zckey_t cmd,
 	if (cmd == ZFS_CRYPTO_CREATE) {
 		pzhp = make_dataset_handle(hdl, parent);
 	} else if (cmd == ZFS_CRYPTO_CLONE) {
-		zfs_handle_t *szhp = make_dataset_handle(hdl, zc->zc_value);
+		zfs_handle_t *szhp = make_dataset_handle(hdl, zc_value);
 		if (szhp == NULL) {
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 			    "parent not found"));
@@ -1424,8 +1429,8 @@ zfs_crypto_zckey(libzfs_handle_t *hdl, zfs_crypto_zckey_t cmd,
 			inherit_keysource = B_TRUE;
 			recv_existing = B_TRUE;
 		} else {
-			if (strlen(zc->zc_string) != 0) {
-				pzhp = make_dataset_handle(hdl, zc->zc_string);
+			if (strlen(zc_string) != 0) {
+				pzhp = make_dataset_handle(hdl, zc_string);
 				recv_clone = B_TRUE;
 			} else {
 				pzhp = make_dataset_handle(hdl, parent);
@@ -1488,9 +1493,8 @@ zfs_crypto_zckey(libzfs_handle_t *hdl, zfs_crypto_zckey_t cmd,
 	 * Need to pass down the inherited crypt value so that
 	 * dsl_crypto_key_gen() can see the same that we saw.
 	 */
-	zc->zc_crypto.zic_crypt = crypt;
-	zc->zc_crypto.zic_clone_newkey = hdl->libzfs_crypt.zc_clone_newkey;
-
+	zic->zic_crypt = crypt;
+    zic->zic_clone_newkey = hdl->libzfs_crypt.zc_clone_newkey;
 	/*
 	 * Here we have encryption on so we need to find a valid keysource
 	 * property.
@@ -1540,7 +1544,7 @@ zfs_crypto_zckey(libzfs_handle_t *hdl, zfs_crypto_zckey_t cmd,
 			(void) strlcpy(propsrc, target, sizeof (propsrc));
 		} else if (recv_clone) {
 			(void) strlcpy(propsrc,
-			    zc->zc_string, sizeof (propsrc));
+			    zc_string, sizeof (propsrc));
 		} else if (propsrctype == ZPROP_SRC_LOCAL ||
 		    propsrctype == ZPROP_SRC_RECEIVED) {
 			(void) strlcpy(propsrc, parent, sizeof (propsrc));
@@ -1605,9 +1609,9 @@ zfs_crypto_zckey(libzfs_handle_t *hdl, zfs_crypto_zckey_t cmd,
 		 * dataset.
 		 */
 		if (keystatus == ZFS_CRYPT_KEY_AVAILABLE) {
-			zc->zc_crypto.zic_cmd = ZFS_IOC_CRYPTO_KEY_INHERIT;
-			(void) strlcpy(zc->zc_crypto.zic_inherit_dsname,
-			    propsrc, sizeof (zc->zc_crypto.zic_inherit_dsname));
+            zic->zic_cmd = ZFS_IOC_CRYPTO_KEY_INHERIT;
+            (void) strlcpy((char *)zic->zic_inherit_dsname,
+                           propsrc, sizeof ((char *)zic->zic_inherit_dsname));
 			ret = 0;
 			goto out;
 		} else if (keystatus == ZFS_CRYPT_KEY_UNAVAILABLE) {
@@ -1626,13 +1630,14 @@ load_key:
 		errno = ENOTTY;
 		return (-1);
 	}
-	ret = key_hdl_to_zc(hdl, NULL, keysource, crypt, zc, cmd);
+	ret = key_hdl_to_zc(hdl, NULL, keysource, crypt, zc_name, zc_value, zic,
+                        cmd);
 	if (ret != 0) {
 		ret = -1;
 		(void) zfs_error(hdl, EZFS_KEYERR, errbuf);
 		goto out;
 	}
-	zc->zc_crypto.zic_cmd = ZFS_IOC_CRYPTO_KEY_LOAD;
+	zic->zic_cmd = ZFS_IOC_CRYPTO_KEY_LOAD;
 	ret = 0;
 out:
 	if (pzhp)

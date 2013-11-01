@@ -486,8 +486,8 @@ extern int	zil_check_log_chain(const char *osname, void *txarg);
 extern void	zil_sync(zilog_t *zilog, dmu_tx_t *tx);
 extern void	zil_clean(zilog_t *zilog, uint64_t synced_txg);
 
-extern int	zil_suspend(zilog_t *zilog);
-extern void	zil_resume(zilog_t *zilog);
+extern int	zil_suspend(const char *osname, void **cookiep);
+extern void	zil_resume(void *cookie);
 
 extern void     zil_suspend_dmu_sync(zilog_t *zilog);
 extern void     zil_resume_dmu_sync(zilog_t *zilog);

@@ -52,6 +52,16 @@ typedef enum {
 	ZFS_TYPE_POOL		= 0x8
 } zfs_type_t;
 
+typedef enum dmu_objset_type {
+	DMU_OST_NONE,
+	DMU_OST_META,
+	DMU_OST_ZFS,
+	DMU_OST_ZVOL,
+	DMU_OST_OTHER,			/* For testing only! */
+	DMU_OST_ANY,			/* Be careful! */
+	DMU_OST_NUMTYPES
+} dmu_objset_type_t;
+
 #define	ZFS_TYPE_DATASET	\
 	(ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME | ZFS_TYPE_SNAPSHOT)
 
@@ -134,6 +144,7 @@ typedef enum {
 	ZFS_PROP_WRITTEN,
 	ZFS_PROP_CLONES,
 	ZFS_PROP_SNAPDEV,
+	ZFS_PROP_ACLTYPE,
 	ZFS_NUM_PROPS
 } zfs_prop_t;
 
@@ -760,10 +771,10 @@ typedef struct ddt_histogram {
 /*
  * /dev/zfs ioctl numbers.
  */
-#define	ZFS_IOC		('Z' << 8)
-
 typedef enum zfs_ioc {
-	ZFS_IOC_POOL_CREATE = ZFS_IOC,
+	ZFS_IOC_FIRST =	('Z' << 8),
+	ZFS_IOC = ZFS_IOC_FIRST,
+	ZFS_IOC_POOL_CREATE = ZFS_IOC_FIRST,
 	ZFS_IOC_POOL_DESTROY,
 	ZFS_IOC_POOL_IMPORT,
 	ZFS_IOC_POOL_EXPORT,
@@ -800,7 +811,7 @@ typedef enum zfs_ioc {
 	ZFS_IOC_ERROR_LOG,
 	ZFS_IOC_CLEAR,
 	ZFS_IOC_PROMOTE,
-	ZFS_IOC_DESTROY_SNAPS_NVL,
+	ZFS_IOC_DESTROY_SNAPS,
 	ZFS_IOC_SNAPSHOT,
 	ZFS_IOC_DSOBJ_TO_DSNAME,
 	ZFS_IOC_OBJ_TO_PATH,
@@ -835,6 +846,11 @@ typedef enum zfs_ioc {
 	ZFS_IOC_SPACE_SNAPS,
 	ZFS_IOC_POOL_REOPEN,
 	ZFS_IOC_SEND_PROGRESS,
+	ZFS_IOC_LOG_HISTORY,
+	ZFS_IOC_SEND_NEW,
+	ZFS_IOC_SEND_SPACE,
+	ZFS_IOC_CLONE,
+	ZFS_IOC_LAST
 } zfs_ioc_t;
 
 /*
@@ -876,6 +892,12 @@ typedef enum {
 #define	ZPOOL_HIST_TXG		"history txg"
 #define	ZPOOL_HIST_INT_EVENT	"history internal event"
 #define	ZPOOL_HIST_INT_STR	"history internal str"
+#define	ZPOOL_HIST_INT_NAME	"internal_name"
+#define	ZPOOL_HIST_IOCTL	"ioctl"
+#define	ZPOOL_HIST_INPUT_NVL	"in_nvl"
+#define	ZPOOL_HIST_OUTPUT_NVL	"out_nvl"
+#define	ZPOOL_HIST_DSNAME	"dsname"
+#define	ZPOOL_HIST_DSID		"dsid"
 
 /*
  * Flags for ZFS_IOC_VDEV_SET_STATE
@@ -921,6 +943,7 @@ typedef enum {
 #define	ZFS_EV_VDEV_PATH	"vdev_path"
 #define	ZFS_EV_VDEV_GUID	"vdev_guid"
 
+<<<<<<< HEAD
 /*
  * Note: This is encoded on-disk, so new events must be added to the
  * end, and unused events can not be removed.  Be sure to edit
@@ -974,6 +997,8 @@ typedef enum history_internal_events {
 	LOG_END
 } history_internal_events_t;
 
+=======
+>>>>>>> upstream/master
 #ifdef	__cplusplus
 }
 #endif
