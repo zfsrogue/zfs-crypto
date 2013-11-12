@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2013 by Delphix. All rights reserved.
  */
 
 /* Portions Copyright 2010 Robert Milkowski */
@@ -88,9 +88,9 @@ zil_stats_t zil_stats = {
 static kstat_t *zil_ksp;
 
 /*
- * This global ZIL switch affects all pools
+ * Disable intent logging replay.  This global ZIL switch affects all pools.
  */
-int zil_replay_disable = 0;    /* disable intent logging replay */
+int zil_replay_disable = 0;
 
 /*
  * Tunable parameter for debugging or performance analysis.  Setting
@@ -164,7 +164,7 @@ zil_bp_tree_add(zilog_t *zilog, const blkptr_t *bp)
 	avl_index_t where;
 
 	if (avl_find(t, dva, &where) != NULL)
-		return (EEXIST);
+		return (SET_ERROR(EEXIST));
 
 	zn = kmem_alloc(sizeof (zil_bp_node_t), KM_PUSHPAGE);
 	zn->zn_dva = *dva;
@@ -258,7 +258,7 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 
 			if (bcmp(&cksum, &zilc->zc_next_blk.blk_cksum,
 			    sizeof (cksum)) || BP_IS_HOLE(&zilc->zc_next_blk)) {
-				error = ECKSUM;
+				error = SET_ERROR(ECKSUM);
 			} else {
 				bcopy(lr, dst, len);
 				*end = (char *)dst + len;
@@ -271,7 +271,7 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 			if (bcmp(&cksum, &zilc->zc_next_blk.blk_cksum,
 			    sizeof (cksum)) || BP_IS_HOLE(&zilc->zc_next_blk) ||
 			    (zilc->zc_nused > (size - sizeof (*zilc)))) {
-				error = ECKSUM;
+				error = SET_ERROR(ECKSUM);
 			} else {
 				bcopy(lr, dst, zilc->zc_nused);
 				*end = (char *)dst + zilc->zc_nused;
@@ -280,7 +280,6 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 		}
 
 		VERIFY(arc_buf_remove_ref(abuf, &abuf));
-
 	}
 
 	if (raw)
@@ -986,6 +985,7 @@ zil_lwb_write_init(zilog_t *zilog, lwb_t *lwb)
 
 /*
  * Define a limited set of intent log block sizes.
+ *
  * These must be a multiple of 4KB. Note only the amount used (again
  * aligned to 4KB) actually gets written. However, we can't always just
  * allocate SPA_MAXBLOCKSIZE as the slog space could be exhausted.
@@ -1078,7 +1078,9 @@ zil_lwb_write_start(zilog_t *zilog, lwb_t *lwb)
 
 	BP_ZERO(bp);
 	use_slog = USE_SLOG(zilog);
+
 	error = zio_alloc_zil(spa, txg, bp, zil_blksz, USE_SLOG(zilog), zilog->zl_os->os_crypt);
+
 	if (use_slog)
 	{
 		ZIL_STAT_BUMP(zil_itx_metaslab_slog_count);
@@ -2015,7 +2017,7 @@ zil_suspend(const char *osname, void **cookiep)
 	if (zh->zh_flags & ZIL_REPLAY_NEEDED) {		/* unplayed log */
 		mutex_exit(&zilog->zl_lock);
 		dmu_objset_rele(os, suspend_tag);
-		return (EBUSY);
+		return (SET_ERROR(EBUSY));
 	}
 
 	/*
@@ -2097,20 +2099,6 @@ zil_resume(void *cookie)
 	mutex_exit(&zilog->zl_lock);
 	dsl_dataset_long_rele(dmu_objset_ds(os), suspend_tag);
 	dsl_dataset_rele(dmu_objset_ds(os), suspend_tag);
-}
-
-void
-zil_suspend_dmu_sync(zilog_t *zilog)
-{
-    atomic_inc_32(&zilog->zl_no_dmu_sync);
-    txg_wait_synced(zilog->zl_dmu_pool, 0);
-}
-
-void
-zil_resume_dmu_sync(zilog_t *zilog)
-{
-        ASSERT(zilog->zl_no_dmu_sync >= 1);
-        atomic_dec_32(&zilog->zl_no_dmu_sync);
 }
 
 typedef struct zil_replay_arg {

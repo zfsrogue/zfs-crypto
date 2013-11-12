@@ -455,6 +455,40 @@ This property is \fBon\fR if the snapshot has been marked for deferred destructi
 .ne 2
 .mk
 .na
+\fB\fBlogicalreferenced\fR\fR
+.ad
+.sp .6
+.RS 4n
+The amount of space that is "logically" accessible by this dataset.  See
+the \fBreferenced\fR property.  The logical space ignores the effect of
+the \fBcompression\fR and \fBcopies\fR properties, giving a quantity
+closer to the amount of data that applications see.  However, it does
+include space consumed by metadata.
+.sp
+This property can also be referred to by its shortened column name,
+\fBlrefer\fR.
+.RE
+
+.sp
+.ne 2
+.na
+\fB\fBlogicalused\fR\fR
+.ad
+.sp .6
+.RS 4n
+The amount of space that is "logically" consumed by this dataset and all
+its descendents.  See the \fBused\fR property.  The logical space
+ignores the effect of the \fBcompression\fR and \fBcopies\fR properties,
+giving a quantity closer to the amount of data that applications see.
+However, it does include space consumed by metadata.
+.sp
+This property can also be referred to by its shortened column name,
+\fBlused\fR.
+.RE
+
+.sp
+.ne 2
+.na
 \fB\fBmounted\fR\fR
 .ad
 .sp .6
@@ -1832,7 +1866,7 @@ Recursively rename the snapshots of all descendent datasets. Snapshots are the o
 .ad
 .sp .6
 .RS 4n
-Lists the property information for the given datasets in tabular form. If specified, you can list property information by the absolute pathname or the relative pathname. By default, all file systems and volumes are displayed. Snapshots are displayed if the \fBlistsnaps\fR property is \fBon\fR (the default is \fBoff\fR) . The following fields are displayed, \fBname,used,available,referenced,mountpoint\fR.
+Lists the property information for the given datasets in tabular form. If specified, you can list property information by the absolute pathname or the relative pathname. By default, all file systems and volumes are displayed. Snapshots are displayed if the \fBlistsnaps\fR property is \fBon\fR (the default is \fBoff\fR). When listing hundreds or thousands of snapshots performance can be improved by restricting the output to only the name.  In that case, it is recommended to use \fB-o name -s name\fR. The following fields are displayed by default, \fBname,used,available,referenced,mountpoint\fR.
 .sp
 .ne 2
 .mk

@@ -20,6 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013 by Delphix. All rights reserved.
  */
 
 #include <sys/zfs_context.h>
@@ -202,7 +203,7 @@ zio_checksum_error(zio_t *zio, zio_bad_cksum_t *info)
 	zio_cksum_t actual_cksum, expected_cksum, verifier;
 
 	if (checksum >= ZIO_CHECKSUM_FUNCTIONS || ci->ci_func[0] == NULL)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	if (ci->ci_eck) {
 		zio_eck_t *eck;
@@ -217,10 +218,10 @@ zio_checksum_error(zio_t *zio, zio_bad_cksum_t *info)
 			else if (eck->zec_magic == BSWAP_64(ZEC_MAGIC))
 				nused = BSWAP_64(zilc->zc_nused);
 			else
-				return (ECKSUM);
+				return (SET_ERROR(ECKSUM));
 
 			if (nused > size)
-				return (ECKSUM);
+				return (SET_ERROR(ECKSUM));
 
 			size = P2ROUNDUP_TYPED(nused, ZIL_MIN_BLKSZ, uint64_t);
 		} else {

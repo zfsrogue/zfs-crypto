@@ -141,6 +141,7 @@ struct objset {
 int dmu_objset_hold(const char *name, void *tag, objset_t **osp);
 int dmu_objset_own(const char *name, dmu_objset_type_t type,
     boolean_t readonly, void *tag, objset_t **osp);
+void dmu_objset_refresh_ownership(objset_t *os, void *tag);
 void dmu_objset_rele(objset_t *os, void *tag);
 void dmu_objset_disown(objset_t *os, void *tag);
 int dmu_objset_from_ds(struct dsl_dataset *ds, objset_t **osp);
@@ -159,6 +160,7 @@ uint64_t dmu_objset_fsid_guid(objset_t *os);
 int dmu_objset_find_dp(struct dsl_pool *dp, uint64_t ddobj,
     int func(struct dsl_pool *, struct dsl_dataset *, void *),
     void *arg, int flags);
+void dmu_objset_evict_dbufs(objset_t *os);
 timestruc_t dmu_objset_snap_cmtime(objset_t *os);
 
 /* called from dsl */

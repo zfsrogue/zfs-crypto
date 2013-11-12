@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2013 by Delphix. All rights reserved.
  */
 
 #include <sys/dmu.h>
@@ -113,7 +113,7 @@ diff_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 	int err = 0;
 
 	if (issig(JUSTLOOKING) && issig(FORREAL))
-		return (EINTR);
+		return (SET_ERROR(EINTR));
 
 	if (zb->zb_object != DMU_META_DNODE_OBJECT)
 		return (0);
@@ -136,7 +136,7 @@ diff_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 		if (arc_read(NULL, spa, bp, arc_getbuf_func, &abuf,
 		    ZIO_PRIORITY_ASYNC_READ, ZIO_FLAG_CANFAIL,
 		    &aflags, zb) != 0)
-			return (EIO);
+			return (SET_ERROR(EIO));
 
 		blk = abuf->b_data;
 		for (i = 0; i < blksz >> DNODE_SHIFT; i++) {

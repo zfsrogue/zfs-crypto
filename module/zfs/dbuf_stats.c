@@ -182,21 +182,21 @@ dbuf_stats_hash_table_init(dbuf_hash_table_t *hash)
 	dbuf_stats_t *dsh = &dbuf_stats_hash_table;
 	kstat_t *ksp;
 
-    mutex_init(&dsh->lock, NULL, MUTEX_DEFAULT, NULL);
-    dsh->hash = hash;
+	mutex_init(&dsh->lock, NULL, MUTEX_DEFAULT, NULL);
+	dsh->hash = hash;
 
-    ksp = kstat_create("zfs", 0, "dbufs", "misc",
-                       KSTAT_TYPE_RAW, 0, KSTAT_FLAG_VIRTUAL);
-    dsh->kstat = ksp;
+	ksp = kstat_create("zfs", 0, "dbufs", "misc",
+	    KSTAT_TYPE_RAW, 0, KSTAT_FLAG_VIRTUAL);
+	dsh->kstat = ksp;
 
-    if (ksp) {
-        ksp->ks_lock = &dsh->lock;
-        ksp->ks_ndata = UINT32_MAX;
-        ksp->ks_private = dsh;
-        kstat_set_raw_ops(ksp, dbuf_stats_hash_table_headers,
-                          dbuf_stats_hash_table_data, dbuf_stats_hash_table_addr);
-        kstat_install(ksp);
-    }
+	if (ksp) {
+		ksp->ks_lock = &dsh->lock;
+		ksp->ks_ndata = UINT32_MAX;
+		ksp->ks_private = dsh;
+		kstat_set_raw_ops(ksp, dbuf_stats_hash_table_headers,
+		    dbuf_stats_hash_table_data, dbuf_stats_hash_table_addr);
+		kstat_install(ksp);
+	}
 }
 
 static void

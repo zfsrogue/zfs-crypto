@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2013 by Delphix. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc. All rights reserved.
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
  */
@@ -264,16 +264,9 @@ void dmu_objset_disown(objset_t *os, void *tag);
 int dmu_objset_open_ds(struct dsl_dataset *ds, objset_t **osp);
 
 void dmu_objset_evict_dbufs(objset_t *os);
-    // FIXME
-#if 0
-=======
-void dmu_objset_evict_dbufs(objset_t *os);
 int dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
                       struct dsl_crypto_ctx *crypto_ctx,
     void (*func)(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx), void *arg);
-int dmu_objset_clone(const char *name, struct dsl_dataset *clone_origin,
-    struct dsl_crypto_ctx *crypto_ctx);
-#endif
 int dmu_objset_destroy(const char *name, boolean_t defer);
 int dmu_objset_snapshot(char *fsname, char *snapname, char *tag,
     struct nvlist *props, boolean_t recursive, boolean_t temporary, int fd);
@@ -285,7 +278,6 @@ int dsl_destroy_snapshots_nvl(struct nvlist *snaps, boolean_t defer,
     struct nvlist *errlist);
 int dmu_objset_snapshot_one(const char *fsname, const char *snapname);
 int dmu_objset_snapshot_tmp(const char *, const char *, int);
-
 int dmu_objset_find(char *name, int func(const char *, void *), void *arg,
     int flags);
 void dmu_objset_byteswap(void *buf, size_t size);
@@ -427,6 +419,8 @@ void dmu_write_policy(objset_t *os, struct dnode *dn, int level, int wp,
  * object must be held in an assigned transaction before calling
  * dmu_buf_will_dirty.  You may use dmu_buf_set_user() on the bonus
  * buffer as well.  You must release what you hold with dmu_buf_rele().
+ *
+ * Returns ENOENT, EIO, or 0.
  */
 int dmu_bonus_hold(objset_t *os, uint64_t object, void *tag, dmu_buf_t **);
 int dmu_bonus_max(void);
@@ -516,6 +510,11 @@ void dmu_evict_user(objset_t *os, dmu_buf_evict_func_t *func);
 void *dmu_buf_get_user(dmu_buf_t *db);
 
 /*
+ * Returns the blkptr associated with this dbuf, or NULL if not set.
+ */
+struct blkptr *dmu_buf_get_blkptr(dmu_buf_t *db);
+
+/*
  * Indicate that you are going to modify the buffer's data (db_data).
  *
  * The transaction (tx) must be assigned to a txg (ie. you've called
@@ -592,7 +591,7 @@ int dmu_free_range(objset_t *os, uint64_t object, uint64_t offset,
 	uint64_t size, dmu_tx_t *tx);
 int dmu_free_long_range(objset_t *os, uint64_t object, uint64_t offset,
 	uint64_t size);
-int dmu_free_object(objset_t *os, uint64_t object);
+int dmu_free_long_object(objset_t *os, uint64_t object);
 
 /*
  * Convenience functions.
@@ -684,8 +683,13 @@ extern const dmu_object_byteswap_info_t dmu_ot_byteswap[DMU_BSWAP_NUMFUNCS];
  */
 int dmu_object_info(objset_t *os, uint64_t object, dmu_object_info_t *doi);
 void __dmu_object_info_from_dnode(struct dnode *dn, dmu_object_info_t *doi);
+/* Like dmu_object_info, but faster if you have a held dnode in hand. */
 void dmu_object_info_from_dnode(struct dnode *dn, dmu_object_info_t *doi);
 void dmu_object_info_from_db(dmu_buf_t *db, dmu_object_info_t *doi);
+/*
+ * Like dmu_object_info_from_db, but faster still when you only care about
+ * the size.  This is specifically optimized for zfs_getattr().
+ */
 void dmu_object_size_from_db(dmu_buf_t *db, uint32_t *blksize,
     u_longlong_t *nblk512);
 

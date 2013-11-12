@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2013 by Delphix. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
  */
 
@@ -245,7 +245,6 @@ int spa_mode_global;
  * Secondly, the value determines if an I/O is considered "hung".
  * Any I/O that has not completed in zfs_deadman_synctime is considered
  * "hung" resulting in a zevent being posted.
- * 1000 zfs_txg_synctime_ms (i.e. 1000 seconds).
  */
 unsigned long zfs_deadman_synctime = 1000ULL;
 
@@ -490,8 +489,8 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 	spa->spa_proc = &p0;
 	spa->spa_proc_state = SPA_PROC_NONE;
 
-	spa->spa_deadman_synctime = zfs_deadman_synctime *
-	    zfs_txg_synctime_ms * MICROSEC;
+	spa->spa_deadman_synctime = MSEC2NSEC(zfs_deadman_synctime *
+	    zfs_txg_synctime_ms);
 
 	refcount_create(&spa->spa_refcount);
 	spa_config_lock_init(spa);
@@ -1288,7 +1287,7 @@ spa_freeze(spa_t *spa)
 
 /*
  * This is a stripped-down version of strtoull, suitable only for converting
- * lowercase hexidecimal numbers that don't overflow.
+ * lowercase hexadecimal numbers that don't overflow.
  */
 uint64_t
 strtonum(const char *str, char **nptr)
@@ -1631,6 +1630,23 @@ spa_init(int mode)
 
 	spa_mode_global = mode;
 
+#ifndef _KERNEL
+	if (spa_mode_global != FREAD && dprintf_find_string("watch")) {
+		struct sigaction sa;
+
+		sa.sa_flags = SA_SIGINFO;
+		sigemptyset(&sa.sa_mask);
+		sa.sa_sigaction = arc_buf_sigsegv;
+
+		if (sigaction(SIGSEGV, &sa, NULL) == -1) {
+			perror("could not enable watchpoints: "
+			    "sigaction(SIGSEGV, ...) = ");
+		} else {
+			arc_watch = B_TRUE;
+		}
+	}
+#endif
+
 	fm_init();
 	refcount_init();
 	unique_init();
@@ -1758,7 +1774,7 @@ spa_scan_get_stats(spa_t *spa, pool_scan_stat_t *ps)
 	dsl_scan_t *scn = spa->spa_dsl_pool ? spa->spa_dsl_pool->dp_scan : NULL;
 
 	if (scn == NULL || scn->scn_phys.scn_func == POOL_SCAN_NONE)
-		return (ENOENT);
+		return (SET_ERROR(ENOENT));
 	bzero(ps, sizeof (pool_scan_stat_t));
 
 	/* data stored on disk */

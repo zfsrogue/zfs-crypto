@@ -566,6 +566,7 @@ dsl_crypto_key_new(const char *dsname)
 	struct knarg arg;
 	int error;
     dsl_pool_t *dp;
+    void *cookie;
 
     error = dsl_pool_hold(dsname, FTAG, &dp);
     if (error != 0)
@@ -609,7 +610,8 @@ dsl_crypto_key_new(const char *dsname)
 	ASSERT(ds != NULL);
 	ASSERT(ds->ds_objset != NULL);
 
-	zil_suspend_dmu_sync(dmu_objset_zil(os));
+	//zil_suspend_dmu_sync(dmu_objset_zil(os));
+	zil_suspend(dsname, &cookie);
 
 	arg.kn_skn = skn;
 	arg.kn_txgkey = zcrypt_key_gen(os->os_crypt);
@@ -626,7 +628,8 @@ dsl_crypto_key_new(const char *dsname)
 
 	zcrypt_key_release(skn->skn_wrapkey, FTAG);
 
-	zil_resume_dmu_sync(dmu_objset_zil(os));
+	//zil_resume_dmu_sync(dmu_objset_zil(os));
+	zil_resume(os);
 
 	dsl_dataset_rele(ds, FTAG);
     dsl_pool_rele(dp, FTAG);

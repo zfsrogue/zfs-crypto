@@ -478,7 +478,7 @@ extern int spa_open_rewind(const char *pool, spa_t **, void *tag,
 extern int spa_get_stats(const char *pool, nvlist_t **config, char *altroot,
     size_t buflen);
 extern int spa_create(const char *pool, nvlist_t *config, nvlist_t *props,
-    const char *history_str, struct dsl_crypto_ctx *dcc, nvlist_t *zplprops);
+    struct dsl_crypto_ctx *dcc, nvlist_t *zplprops);
 extern int spa_import_rootpool(char *devpath, char *devid);
 extern int spa_import(char *pool, nvlist_t *config, nvlist_t *props,
     uint64_t flags);
@@ -606,6 +606,7 @@ typedef struct spa_stats {
 	spa_stats_history_t	read_history;
 	spa_stats_history_t	txg_history;
 	spa_stats_history_t	tx_assign_histogram;
+	spa_stats_history_t	io_history;
 } spa_stats_t;
 
 typedef enum txg_state {
@@ -622,7 +623,7 @@ extern void spa_read_history_add(spa_t *spa, const zbookmark_t *zb,
     uint32_t aflags);
 extern void spa_txg_history_add(spa_t *spa, uint64_t txg);
 extern int spa_txg_history_set(spa_t *spa,  uint64_t txg,
-  txg_state_t completed_state, hrtime_t completed_time);
+    txg_state_t completed_state, hrtime_t completed_time);
 extern int spa_txg_history_set_io(spa_t *spa,  uint64_t txg, uint64_t nread,
     uint64_t nwritten, uint64_t reads, uint64_t writes, uint64_t nreserved);
 extern void spa_tx_assign_add_nsecs(spa_t *spa, uint64_t nsecs);

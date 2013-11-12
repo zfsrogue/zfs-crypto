@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2013 by Delphix. All rights reserved.
  */
 
 #include <sys/zfs_context.h>
@@ -361,7 +361,7 @@ traverse_visitbp(traverse_data_t *td, const dnode_phys_t *dnp,
 		(void) arc_buf_remove_ref(buf, &buf);
 
 post:
-	if (err == 0 && lasterr == 0 && (td->td_flags & TRAVERSE_POST)) {
+	if (err == 0 && (td->td_flags & TRAVERSE_POST)) {
 		err = td->td_func(td->td_spa, NULL, bp, zb, dnp, td->td_arg);
 		if (err == ERESTART)
 			pause = B_TRUE;
@@ -434,7 +434,7 @@ traverse_prefetcher(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 
 	ASSERT(pfd->pd_blks_fetched >= 0);
 	if (pfd->pd_cancel)
-		return (EINTR);
+		return (SET_ERROR(EINTR));
 
 	if (bp == NULL || !((pfd->pd_flags & TRAVERSE_PREFETCH_DATA) ||
 	    BP_GET_TYPE(bp) == DMU_OT_DNODE || BP_GET_LEVEL(bp) > 0) ||
