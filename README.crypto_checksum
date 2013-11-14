@@ -1,0 +1,52 @@
+As of commit 2a609fc0527911e516e87e286b2f4ea089bb93c3 (Tue Aug 27,
+03:21:00 2013) zfs-crypto now does a checksum verifications.
+
+This unfortunatly makes any crypted filesystem created before this
+unmountable.
+
+Trying to mount an encrypted filesystem that was created before this
+on a new version module, would give:
+
+	filesystem '<filesystem>' can not be mounted due to error 52
+	cannot mount '<filesystem>': Invalid argument
+
+This verification can be disabled so that mounting an encrypted
+filesystem created when zfs-crypto did not use MAC checksums by adding
+the optional module parameter 'zfs_crypto_ignore_checksum_errors' (set
+to '1' to ignore checksum errors) like so:
+
+	modprobe zfs zfs_crypto_ignore_checksum_errors=1
+
+Then mount the filesystem, copy it to an unencrypted filesystem,
+unmount and destroy the current filesystem. Then reboot (or unload the
+module) then load the module normaly and create a new crypted
+filesystem and copy your data back.
+
+
+It might also be possible (untested!) to simply set the parameter
+'live' by echoing a 1 into the file
+
+	/sys/module/zfs/parameters/zfs_crypto_ignore_checksum_errors
+
+like this:
+
+	echo 1 > /sys/module/zfs/parameters/zfs_crypto_ignore_checksum_errors
+
+and then mount the filesystem again, copying the data to a newly
+created filesystem.
+
+Doing this _AFTER_ creating a new, crypted filesystem would then
+ensure that the sensetive data never touches an unencrypted
+filesystem:
+
+	# echo 0 > /sys/module/zfs/parameters/zfs_crypto_ignore_checksum_errors
+	# zfs create <options> <new_filesystem>
+	# echo 1 > /sys/module/zfs/parameters/zfs_crypto_ignore_checksum_errors
+	# zfs mount <old_filesystem>
+	[copy data from old filesystem to the new filesystem]
+	# zfs umount <old_filesystem>
+	# zfs destroy <old_filesystem>
+	# echo 0 > /sys/module/zfs/parameters/zfs_crypto_ignore_checksum_errors
+
+NOTE: This naturally would need to be done for each one of your
+      crypted filesystem!
