@@ -30,6 +30,8 @@
 #include <sys/zil.h>
 #include <zfs_fletcher.h>
 
+unsigned int zfs_crypto_ignore_checksum_errors = 0; /* Disable crypto checksum checks */
+
 /*
  * Checksum vectors.
  *
@@ -271,25 +273,34 @@ zio_checksum_error(zio_t *zio, zio_bad_cksum_t *info)
 	 * The rest of words 2 and all of word 3 are the crypto MAC so
 	 * ignore those because we can't check them until we do the decryption
 	 * later, nor could we do them if the key wasn't present
+	 *
+	 * If module param 'zfs_crypto_ignore_checksum_errors' is set, ignore
+	 * any checksum errors.
 	 */
 	if (ci->ci_trunc) {
-	  if (!(0 == (
+	  if (!zfs_crypto_ignore_checksum_errors && !(0 == (
 		      (actual_cksum.zc_word[0] - expected_cksum.zc_word[0]) |
 		      (actual_cksum.zc_word[1] - expected_cksum.zc_word[1]) |
 		      (BF64_GET(actual_cksum.zc_word[2], 0, 32) -
 		       BF64_GET(expected_cksum.zc_word[2], 0, 32))))) {
-            return (ECKSUM);
+	    return (ECKSUM);
 	  }
-	} else if (!ZIO_CHECKSUM_EQUAL(actual_cksum, expected_cksum)) {
-	  return (ECKSUM);
+	} else if (!zfs_crypto_ignore_checksum_errors &&
+		   !ZIO_CHECKSUM_EQUAL(actual_cksum, expected_cksum)) {
+	    return (ECKSUM);
 	}
 
 	if (zio_injection_enabled && !zio->io_error &&
 	    (error = zio_handle_fault_injection(zio, ECKSUM)) != 0) {
-
 		info->zbc_injected = 1;
 		return (error);
 	}
 
 	return (0);
 }
+
+#if defined(_KERNEL) && defined(HAVE_SPL)
+module_param(zfs_crypto_ignore_checksum_errors, int, 0644);
+MODULE_PARM_DESC(zfs_crypto_ignore_checksum_errors,
+    "Disable crypto checksum checks");
+#endif
