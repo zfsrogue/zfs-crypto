@@ -1988,8 +1988,8 @@ zio_gang_tree_issue(zio_t *pio, zio_gang_node_t *gn, blkptr_t *bp, void *data)
 	 * !spa_writable check allows for zdb_read_block()
 	 */
 	ASSERT(!spa_writeable(pio->io_spa) ||
-	    (BP_IS_ENCRYPTED(gio->io_bp) &&
-	    (BP_GET_CHECKSUM(bp) == BP_GET_CHECKSUM(gio->io_bp)) ||
+	    ((BP_IS_ENCRYPTED(gio->io_bp) &&
+	    (BP_GET_CHECKSUM(bp) == BP_GET_CHECKSUM(gio->io_bp))) ||
 	    (BP_GET_CHECKSUM(bp) == ZIO_CHECKSUM_SHA256 &&
 	    BP_GET_CRYPT(bp) == 0)) ||
 	    (BP_GET_CHECKSUM(bp) == BP_GET_CHECKSUM(gio->io_bp)));
