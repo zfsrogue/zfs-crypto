@@ -149,6 +149,7 @@ zio_crypt_select_wrap(enum zio_crypt wcrypt)
  * a risk then dedup should be set to off on those encrypted datasets.
  *
  */
+#if _KERNEL
 static void
 zio_crypt_gen_data_iv(int crypt, int type, boolean_t dedup, void *data,
     uint64_t datalen, zcrypt_key_t *key, uint64_t txg, zbookmark_t *bookmark,
@@ -157,7 +158,6 @@ zio_crypt_gen_data_iv(int crypt, int type, boolean_t dedup, void *data,
 	size_t ivlen = ZIO_CRYPT_DATA_IVLEN;
 	uint16_t _iv[6];
 	uint64_t ctr;
-#if _KERNEL
 	ASSERT3U(sizeof (_iv), ==, ZIO_CRYPT_DATA_IVLEN);
 	bzero(iv, ivlen);
 
@@ -209,7 +209,6 @@ zio_crypt_gen_data_iv(int crypt, int type, boolean_t dedup, void *data,
 	_iv[4] = BE_16(BF64_GET(ctr, 16, 16));
 	_iv[5] = BE_16(BF64_GET(ctr,  0, 16));
 	bcopy(&_iv, iv, sizeof (_iv));
-#endif
 }
 
 static crypto_mechanism_t *
@@ -320,6 +319,7 @@ zio_crypt_free_mech(crypto_mechanism_t *mech)
 	bzero(mech, sizeof (crypto_mechanism_t));
 	kmem_free(mech, sizeof (crypto_mechanism_t));
 }
+#endif
 
 
 /*
