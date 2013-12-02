@@ -336,9 +336,11 @@ dsl_crypto_key_unload(const char *dsname)
 	spa_t *spa;
     dsl_pool_t *dp;
 #ifdef _KERNEL
+#if 0 // FIXME
 	dmu_objset_type_t os_type;
-	//vfs_t *vfsp;
     struct vfsmount *vfsp;
+	//vfs_t *vfsp;
+#endif
 #endif /* _KERNEL */
 
     error = dsl_pool_hold(dsname, FTAG, &dp);
