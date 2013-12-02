@@ -719,6 +719,7 @@ zcrypt_keychain_init(void)
 	return (tree);
 }
 
+#if _KERNEL
 static zcrypt_keychain_node_t *
 zcrypt_keychain_find(avl_tree_t keychain, uint64_t txg)
 {
@@ -734,6 +735,7 @@ zcrypt_keychain_find(avl_tree_t keychain, uint64_t txg)
 
 	return (found_dkn);
 }
+#endif
 
 void
 zcrypt_keychain_insert(avl_tree_t *keychain, uint64_t txg,
