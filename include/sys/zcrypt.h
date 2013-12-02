@@ -26,6 +26,24 @@
 #ifndef _SYS_ZCRYPT_H
 #define	_SYS_ZCRYPT_H
 
+/* These two is also defined in /usr/include/elf.h
+ * In file included from ../../include/sys/zio.h:32,
+ *                  from ../../include/sys/zcrypt.h:29,
+ *                  from ../../include/libzfs.h:41,
+ *                  from ../../lib/libzfs/libzfs_fru.c:35:
+ * ../../include/sys/zfs_context.h:550:1: error: "AT_UID" redefined
+ * In file included from /usr/include/link.h:25,
+ *                  from ../../lib/libzfs/libzfs_fru.c:30:
+ * /usr/include/elf.h:942:1: error: this is the location of the previous definition
+ */
+#ifdef AT_UID
+#undef AT_UID
+#endif
+
+#ifdef AT_GID
+#undef AT_GID
+#endif
+
 #include <sys/zio.h>
 #include <sys/crypto/api.h>
 #include <sys/refcount.h>
