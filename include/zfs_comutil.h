@@ -38,7 +38,7 @@ extern void zpool_get_rewind_policy(nvlist_t *, zpool_rewind_policy_t *);
 
 extern int zfs_zpl_version_map(int spa_version);
 extern int zfs_spa_version_map(int zpl_version);
-#define	ZFS_NUM_LEGACY_HISTORY_EVENTS 41
+#define	ZFS_NUM_LEGACY_HISTORY_EVENTS 43
 extern const char *zfs_history_event_names[ZFS_NUM_LEGACY_HISTORY_EVENTS];
 
 #ifdef	__cplusplus
