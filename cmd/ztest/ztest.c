@@ -4880,7 +4880,7 @@ ztest_dsl_crypto(ztest_ds_t *zd, uint64_t id)
     zfs_crypt_key_status_t keystatus;
     zcrypt_key_t *wrapkey;
     int error;
-    char *name;
+    char *name = NULL;
     dsl_pool_t *dp;
 
     if (!ztest_opts.zo_crypto || zd->zd_crypt == 0 || zd->zd_crypt == ZIO_CRYPT_OFF)
