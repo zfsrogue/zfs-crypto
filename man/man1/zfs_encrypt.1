@@ -126,6 +126,22 @@ The following properties cannot be changed after the file system is created and,
 .RS 4n
 Defines the encryption algorithm and key length that is used for the encrypted dataset. The \fBon\fR value is equal to \fBaes-128-ccm\fR. The default value is \fBoff\fR. When encryption is set to a value other than \fBoff\fR, the \fBchecksum\fR property is set to \fBsha256+mac\fR and becomes \fBreadonly\fR.
 .RE
+.LP
+For a ZVOL, the only encryption algorithms allowed is
+.LP
+.ne 2
+.mk
+.na
+\fB\fBencryption\fR=\fBoff\fR | \fBon\fR
+.ad
+.sp .6
+.RS 4n
+The \fBon\fR defaults to \fBaes-128-ctr\fR (which can't be set specifically) when setting encryption for a ZVOL.
+.RE
+.LP
+A keylength of 128 is 16 bytes long, while a 256 key is 32 bytes so keep that in mind if/when you create a key file with \fBdd\fR.
+.RE
+.RE
 
 .sp
 .LP
