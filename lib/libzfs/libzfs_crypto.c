@@ -1476,6 +1476,16 @@ zfs_crypto_zckey(libzfs_handle_t *hdl, zfs_crypto_zckey_t cmd,
      */
     /* If encryption is on, and volume, change it to valid cipher. */
     if ((type == ZFS_TYPE_VOLUME) && (crypt != ZIO_CRYPT_OFF)) {
+        if(crypt != ZIO_CRYPT_ON) {
+            /* For a volume, only aes-128-ctr is allowed. This is, however not
+	     * allowed to be set via userland - only 'on' and 'off' is.
+	     *
+	     * Notify user that aes-128-ctr is enforced/used instead.
+	     */
+            (void) fprintf(stderr, dgettext(TEXT_DOMAIN,
+                "For volumes, only 'on' or 'off' is allowed. Forcing this to be set.\n"));
+	}
+
         crypt = ZIO_CRYPT_AES_128_CTR;
         /* We also have to write out the prop, in the case of inheritance
            or it will be using the wrong cipher */
