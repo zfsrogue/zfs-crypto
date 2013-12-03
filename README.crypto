@@ -31,7 +31,7 @@ Required work before Alpha:
 
 * Implement (at least) default cipher, instead of current XOR$20
 
-* Implement MAC checksum, currently checksum errors are ignored.
+* Implement MAC checksum. PLEASE READ README.crypto_checksum !!
 
 * Prompt for key (getpassphrase) needs implementing. It is possible
   that getpass() will suffice on Linux, as it does not limit input to
