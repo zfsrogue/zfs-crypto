@@ -3296,7 +3296,7 @@ static int
 zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 {
 	int error = 0;
-	zfs_creat_t zct;
+	zfs_creat_t zct = { 0 };
     dsl_crypto_ctx_t dcc = { 0 };
 	nvlist_t *nvprops = NULL;
 	void (*cbfunc)(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx);
