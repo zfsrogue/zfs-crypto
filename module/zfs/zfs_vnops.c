@@ -106,11 +106,18 @@
  *  (3)	All range locks must be grabbed before calling dmu_tx_assign(),
  *	as they can span dmu_tx_assign() calls.
  *
- *  (4)	Always pass TXG_NOWAIT as the second argument to dmu_tx_assign().
- *	This is critical because we don't want to block while holding locks.
- *	Note, in particular, that if a lock is sometimes acquired before
- *	the tx assigns, and sometimes after (e.g. z_lock), then failing to
- *	use a non-blocking assign can deadlock the system.  The scenario:
+ *  (4) If ZPL locks are held, pass TXG_NOWAIT as the second argument to
+ *      dmu_tx_assign().  This is critical because we don't want to block
+ *      while holding locks.
+ *
+ *	If no ZPL locks are held (aside from ZFS_ENTER()), use TXG_WAIT.  This
+ *	reduces lock contention and CPU usage when we must wait (note that if
+ *	throughput is constrained by the storage, nearly every transaction
+ *	must wait).
+ *
+ *      Note, in particular, that if a lock is sometimes acquired before
+ *      the tx assigns, and sometimes after (e.g. z_lock), then failing
+ *      to use a non-blocking assign can deadlock the system.  The scenario:
  *
  *	Thread A has grabbed a lock before calling dmu_tx_assign().
  *	Thread B is in an already-assigned tx, and blocks for this lock.
@@ -118,7 +125,11 @@
  *	forever, because the previous txg can't quiesce until B's tx commits.
  *
  *	If dmu_tx_assign() returns ERESTART and zsb->z_assign is TXG_NOWAIT,
- *	then drop all locks, call dmu_tx_wait(), and try again.
+ *	then drop all locks, call dmu_tx_wait(), and try again.  On subsequent
+ *	calls to dmu_tx_assign(), pass TXG_WAITED rather than TXG_NOWAIT,
+ *	to indicate that this operation has already called dmu_tx_wait().
+ *	This will ensure that we don't retry forever, waiting a short bit
+ *	each time.
  *
  *  (5)	If the operation succeeded, generate the intent log entry for it
  *	before dropping locks.  This ensures that the ordering of events
@@ -140,12 +151,13 @@
  *	rw_enter(...);			// grab any other locks you need
  *	tx = dmu_tx_create(...);	// get DMU tx
  *	dmu_tx_hold_*();		// hold each object you might modify
- *	error = dmu_tx_assign(tx, TXG_NOWAIT);	// try to assign
+ *	error = dmu_tx_assign(tx, waited ? TXG_WAITED : TXG_NOWAIT);
  *	if (error) {
  *		rw_exit(...);		// drop locks
  *		zfs_dirent_unlock(dl);	// unlock directory entry
  *		iput(...);		// release held vnodes
  *		if (error == ERESTART) {
+ *			waited = B_TRUE;
  *			dmu_tx_wait(tx);
  *			dmu_tx_abort(tx);
  *			goto top;
@@ -547,7 +559,6 @@ out:
 	zfs_range_unlock(rl);
 
 	ZFS_ACCESSTIME_STAMP(zsb, zp);
-	zfs_inode_update(zp);
 	ZFS_EXIT(zsb);
 	return (error);
 }
@@ -712,7 +723,6 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 	while (n > 0) {
 		abuf = NULL;
 		woff = uio->uio_loffset;
-again:
 		if (zfs_owner_overquota(zsb, zp, B_FALSE) ||
 		    zfs_owner_overquota(zsb, zp, B_TRUE)) {
 			if (abuf != NULL)
@@ -762,13 +772,8 @@ again:
 		dmu_tx_hold_sa(tx, zp->z_sa_hdl, B_FALSE);
 		dmu_tx_hold_write(tx, zp->z_id, woff, MIN(n, max_blksz));
 		zfs_sa_upgrade_txholds(tx, zp);
-		error = dmu_tx_assign(tx, TXG_NOWAIT);
+		error = dmu_tx_assign(tx, TXG_WAIT);
 		if (error) {
-			if (error == ERESTART) {
-				dmu_tx_wait(tx);
-				dmu_tx_abort(tx);
-				goto again;
-			}
 			dmu_tx_abort(tx);
 			if (abuf != NULL)
 				dmu_return_arcbuf(abuf);
@@ -892,7 +897,8 @@ again:
 
 		error = sa_bulk_update(zp->z_sa_hdl, bulk, count, tx);
 
-		zfs_log_write(zilog, tx, TX_WRITE, zp, woff, tx_bytes, ioflag);
+		zfs_log_write(zilog, tx, TX_WRITE, zp, woff, tx_bytes, ioflag,
+		    NULL, NULL);
 		dmu_tx_commit(tx);
 
 		if (error != 0)
@@ -1277,6 +1283,7 @@ zfs_create(struct inode *dip, char *name, vattr_t *vap, int excl,
 	zfs_acl_ids_t   acl_ids;
 	boolean_t	fuid_dirtied;
 	boolean_t	have_acl = B_FALSE;
+	boolean_t	waited = B_FALSE;
 
 	/*
 	 * If we have an ephemeral id, ACL, or XVATTR then
@@ -1389,10 +1396,11 @@ top:
 			dmu_tx_hold_write(tx, DMU_NEW_OBJECT,
 			    0, acl_ids.z_aclp->z_acl_bytes);
 		}
-		error = dmu_tx_assign(tx, TXG_NOWAIT);
+		error = dmu_tx_assign(tx, waited ? TXG_WAITED : TXG_NOWAIT);
 		if (error) {
 			zfs_dirent_unlock(dl);
 			if (error == ERESTART) {
+				waited = B_TRUE;
 				dmu_tx_wait(tx);
 				dmu_tx_abort(tx);
 				goto top;
@@ -1522,6 +1530,7 @@ zfs_remove(struct inode *dip, char *name, cred_t *cr)
 #endif /* HAVE_PN_UTILS */
 	int		error;
 	int		zflg = ZEXISTS;
+	boolean_t	waited = B_FALSE;
 
 	ZFS_ENTER(zsb);
 	ZFS_VERIFY_ZP(dzp);
@@ -1597,13 +1606,14 @@ top:
 	/* charge as an update -- would be nice not to charge at all */
 	dmu_tx_hold_zap(tx, zsb->z_unlinkedobj, FALSE, NULL);
 
-	error = dmu_tx_assign(tx, TXG_NOWAIT);
+	error = dmu_tx_assign(tx, waited ? TXG_WAITED : TXG_NOWAIT);
 	if (error) {
 		zfs_dirent_unlock(dl);
 		iput(ip);
 		if (xzp)
 			iput(ZTOI(xzp));
 		if (error == ERESTART) {
+			waited = B_TRUE;
 			dmu_tx_wait(tx);
 			dmu_tx_abort(tx);
 			goto top;
@@ -1708,6 +1718,7 @@ zfs_mkdir(struct inode *dip, char *dirname, vattr_t *vap, struct inode **ipp,
 	gid_t		gid = crgetgid(cr);
 	zfs_acl_ids_t   acl_ids;
 	boolean_t	fuid_dirtied;
+	boolean_t	waited = B_FALSE;
 
 	ASSERT(S_ISDIR(vap->va_mode));
 
@@ -1799,10 +1810,11 @@ top:
 	dmu_tx_hold_sa_create(tx, acl_ids.z_aclp->z_acl_bytes +
 	    ZFS_SA_BASE_ATTR_SIZE);
 
-	error = dmu_tx_assign(tx, TXG_NOWAIT);
+	error = dmu_tx_assign(tx, waited ? TXG_WAITED : TXG_NOWAIT);
 	if (error) {
 		zfs_dirent_unlock(dl);
 		if (error == ERESTART) {
+			waited = B_TRUE;
 			dmu_tx_wait(tx);
 			dmu_tx_abort(tx);
 			goto top;
@@ -1880,6 +1892,7 @@ zfs_rmdir(struct inode *dip, char *name, struct inode *cwd, cred_t *cr,
 	dmu_tx_t	*tx;
 	int		error;
 	int		zflg = ZEXISTS;
+	boolean_t	waited = B_FALSE;
 
 	ZFS_ENTER(zsb);
 	ZFS_VERIFY_ZP(dzp);
@@ -1933,13 +1946,14 @@ top:
 	dmu_tx_hold_zap(tx, zsb->z_unlinkedobj, FALSE, NULL);
 	zfs_sa_upgrade_txholds(tx, zp);
 	zfs_sa_upgrade_txholds(tx, dzp);
-	error = dmu_tx_assign(tx, TXG_NOWAIT);
+	error = dmu_tx_assign(tx, waited ? TXG_WAITED : TXG_NOWAIT);
 	if (error) {
 		rw_exit(&zp->z_parent_lock);
 		rw_exit(&zp->z_name_lock);
 		zfs_dirent_unlock(dl);
 		iput(ip);
 		if (error == ERESTART) {
+			waited = B_TRUE;
 			dmu_tx_wait(tx);
 			dmu_tx_abort(tx);
 			goto top;
@@ -2133,7 +2147,6 @@ update:
 		error = 0;
 
 	ZFS_ACCESSTIME_STAMP(zsb, zp);
-	zfs_inode_update(zp);
 
 out:
 	ZFS_EXIT(zsb);
@@ -2832,12 +2845,9 @@ top:
 
 	zfs_sa_upgrade_txholds(tx, zp);
 
-	err = dmu_tx_assign(tx, TXG_NOWAIT);
-	if (err) {
-		if (err == ERESTART)
-			dmu_tx_wait(tx);
+	err = dmu_tx_assign(tx, TXG_WAIT);
+	if (err)
 		goto out;
-	}
 
 	count = 0;
 	/*
@@ -3170,6 +3180,7 @@ zfs_rename(struct inode *sdip, char *snm, struct inode *tdip, char *tnm,
 	int		cmp, serr, terr;
 	int		error = 0;
 	int		zflg = 0;
+	boolean_t	waited = B_FALSE;
 
 	ZFS_ENTER(zsb);
 	ZFS_VERIFY_ZP(sdzp);
@@ -3384,7 +3395,7 @@ top:
 
 	zfs_sa_upgrade_txholds(tx, szp);
 	dmu_tx_hold_zap(tx, zsb->z_unlinkedobj, FALSE, NULL);
-	error = dmu_tx_assign(tx, TXG_NOWAIT);
+	error = dmu_tx_assign(tx, waited ? TXG_WAITED : TXG_NOWAIT);
 	if (error) {
 		if (zl != NULL)
 			zfs_rename_unlock(&zl);
@@ -3398,6 +3409,7 @@ top:
 		if (tzp)
 			iput(ZTOI(tzp));
 		if (error == ERESTART) {
+			waited = B_TRUE;
 			dmu_tx_wait(tx);
 			dmu_tx_abort(tx);
 			goto top;
@@ -3505,6 +3517,7 @@ zfs_symlink(struct inode *dip, char *name, vattr_t *vap, char *link,
 	zfs_acl_ids_t	acl_ids;
 	boolean_t	fuid_dirtied;
 	uint64_t	txtype = TX_SYMLINK;
+	boolean_t	waited = B_FALSE;
 
 	ASSERT(S_ISLNK(vap->va_mode));
 
@@ -3569,10 +3582,11 @@ top:
 	}
 	if (fuid_dirtied)
 		zfs_fuid_txhold(zsb, tx);
-	error = dmu_tx_assign(tx, TXG_NOWAIT);
+	error = dmu_tx_assign(tx, waited ? TXG_WAITED : TXG_NOWAIT);
 	if (error) {
 		zfs_dirent_unlock(dl);
 		if (error == ERESTART) {
+			waited = B_TRUE;
 			dmu_tx_wait(tx);
 			dmu_tx_abort(tx);
 			goto top;
@@ -3665,7 +3679,6 @@ zfs_readlink(struct inode *ip, uio_t *uio, cred_t *cr)
 	mutex_exit(&zp->z_lock);
 
 	ZFS_ACCESSTIME_STAMP(zsb, zp);
-	zfs_inode_update(zp);
 	ZFS_EXIT(zsb);
 	return (error);
 }
@@ -3700,6 +3713,7 @@ zfs_link(struct inode *tdip, struct inode *sip, char *name, cred_t *cr)
 	int		zf = ZNEW;
 	uint64_t	parent;
 	uid_t		owner;
+	boolean_t	waited = B_FALSE;
 
 	ASSERT(S_ISDIR(tdip->i_mode));
 
@@ -3783,10 +3797,11 @@ top:
 	dmu_tx_hold_zap(tx, dzp->z_id, TRUE, name);
 	zfs_sa_upgrade_txholds(tx, szp);
 	zfs_sa_upgrade_txholds(tx, dzp);
-	error = dmu_tx_assign(tx, TXG_NOWAIT);
+	error = dmu_tx_assign(tx, waited ? TXG_WAITED : TXG_NOWAIT);
 	if (error) {
 		zfs_dirent_unlock(dl);
 		if (error == ERESTART) {
+			waited = B_TRUE;
 			dmu_tx_wait(tx);
 			dmu_tx_abort(tx);
 			goto top;
@@ -3822,19 +3837,11 @@ top:
 EXPORT_SYMBOL(zfs_link);
 
 static void
-zfs_putpage_commit_cb(void *arg, int error)
+zfs_putpage_commit_cb(void *arg)
 {
 	struct page *pp = arg;
 
-	if (error) {
-		__set_page_dirty_nobuffers(pp);
-
-		if (error != ECANCELED)
-			SetPageError(pp);
-	} else {
-		ClearPageError(pp);
-	}
-
+	ClearPageError(pp);
 	end_page_writeback(pp);
 }
 
@@ -3868,7 +3875,6 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc)
 	uint64_t	mtime[2], ctime[2];
 	sa_bulk_attr_t	bulk[3];
 	int		cnt = 0;
-	int		sync;
 
 	ZFS_ENTER(zsb);
 	ZFS_VERIFY_ZP(zp);
@@ -3909,11 +3915,6 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc)
 	rl = zfs_range_lock(zp, pgoff, pglen, RL_WRITER);
 	tx = dmu_tx_create(zsb->z_os);
 
-	sync = ((zsb->z_os->os_sync == ZFS_SYNC_ALWAYS) ||
-	        (wbc->sync_mode == WB_SYNC_ALL));
-	if (!sync)
-		dmu_tx_callback_register(tx, zfs_putpage_commit_cb, pp);
-
 	dmu_tx_hold_write(tx, zp->z_id, pgoff, pglen);
 
 	dmu_tx_hold_sa(tx, zp->z_sa_hdl, B_FALSE);
@@ -3923,16 +3924,10 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc)
 		if (err == ERESTART)
 			dmu_tx_wait(tx);
 
-		/* Will call all registered commit callbacks */
 		dmu_tx_abort(tx);
-
-		/*
-		 * For the synchronous case the commit callback must be
-		 * explicitly called because there is no registered callback.
-		 */
-		if (sync)
-			zfs_putpage_commit_cb(pp, ECANCELED);
-
+		__set_page_dirty_nobuffers(pp);
+		ClearPageError(pp);
+		end_page_writeback(pp);
 		zfs_range_unlock(rl);
 		ZFS_EXIT(zsb);
 		return (err);
@@ -3955,14 +3950,19 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc)
 
 	err = sa_bulk_update(zp->z_sa_hdl, bulk, cnt, tx);
 
-	zfs_log_write(zsb->z_log, tx, TX_WRITE, zp, pgoff, pglen, 0);
+	zfs_log_write(zsb->z_log, tx, TX_WRITE, zp, pgoff, pglen, 0,
+	    zfs_putpage_commit_cb, pp);
 	dmu_tx_commit(tx);
 
 	zfs_range_unlock(rl);
 
-	if (sync) {
+	if (wbc->sync_mode != WB_SYNC_NONE) {
+		/*
+		 * Note that this is rarely called under writepages(), because
+		 * writepages() normally handles the entire commit for
+		 * performance reasons.
+		 */
 		zil_commit(zsb->z_log, zp->z_id);
-		zfs_putpage_commit_cb(pp, err);
 	}
 
 	ZFS_EXIT(zsb);

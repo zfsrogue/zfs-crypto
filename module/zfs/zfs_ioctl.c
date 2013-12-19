@@ -1871,8 +1871,7 @@ zfs_ioc_vdev_add(zfs_cmd_t *zc)
 {
 	spa_t *spa;
 	int error;
-	nvlist_t *config, **l2cache, **spares;
-	uint_t nl2cache = 0, nspares = 0;
+	nvlist_t *config;
 
 	error = spa_open(zc->zc_name, &spa, FTAG);
 	if (error != 0)
@@ -1880,28 +1879,6 @@ zfs_ioc_vdev_add(zfs_cmd_t *zc)
 
 	error = get_nvlist(zc->zc_nvlist_conf, zc->zc_nvlist_conf_size,
 	    zc->zc_iflags, &config);
-	(void) nvlist_lookup_nvlist_array(config, ZPOOL_CONFIG_L2CACHE,
-	    &l2cache, &nl2cache);
-
-	(void) nvlist_lookup_nvlist_array(config, ZPOOL_CONFIG_SPARES,
-	    &spares, &nspares);
-
-	/*
-	 * A root pool with concatenated devices is not supported.
-	 * Thus, can not add a device to a root pool.
-	 *
-	 * Intent log device can not be added to a rootpool because
-	 * during mountroot, zil is replayed, a seperated log device
-	 * can not be accessed during the mountroot time.
-	 *
-	 * l2cache and spare devices are ok to be added to a rootpool.
-	 */
-	if (spa_bootfs(spa) != 0 && nl2cache == 0 && nspares == 0) {
-		nvlist_free(config);
-		spa_close(spa, FTAG);
-		return (SET_ERROR(EDOM));
-	}
-
 	if (error == 0) {
 		error = spa_vdev_add(spa, config);
 		nvlist_free(config);
@@ -2232,7 +2209,7 @@ zfs_ioc_objset_zplprops(zfs_cmd_t *zc)
 	return (err);
 }
 
-static boolean_t
+boolean_t
 dataset_name_hidden(const char *name)
 {
 	/*
@@ -2954,30 +2931,6 @@ zfs_ioc_pool_get_props(zfs_cmd_t *zc)
 
 /*
  * inputs:
- * zc_name              name of volume
- *
- * outputs:             none
- */
-static int
-zfs_ioc_create_minor(zfs_cmd_t *zc)
-{
-	return (zvol_create_minor(zc->zc_name));
-}
-
-/*
- * inputs:
- * zc_name              name of volume
- *
- * outputs:             none
- */
-static int
-zfs_ioc_remove_minor(zfs_cmd_t *zc)
-{
-	return (zvol_remove_minor(zc->zc_name));
-}
-
-/*
- * inputs:
  * zc_name		name of filesystem
  * zc_nvlist_src{_size}	nvlist of delegated permissions
  * zc_perm_action	allow/unallow flag
@@ -3452,6 +3405,12 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		if (error != 0)
 			(void) dsl_destroy_head(fsname);
 	}
+
+#ifdef _KERNEL
+	if (error == 0)
+		zvol_create_minors(fsname);
+#endif
+
 	return (error);
 }
 
@@ -3512,6 +3471,12 @@ zfs_ioc_snapshot(const char *poolname, nvlist_t *innvl, nvlist_t *outnvl)
 	}
 
 	error = dsl_dataset_snapshot(snaps, props, outnvl);
+
+#ifdef _KERNEL
+	if (error == 0)
+		zvol_create_minors(poolname);
+#endif
+
 	return (error);
 }
 
@@ -3663,10 +3628,10 @@ zfs_ioc_destroy_snaps(const char *poolname, nvlist_t *innvl, nvlist_t *outnvl)
 		    (name[poollen] != '/' && name[poollen] != '@'))
 			return (SET_ERROR(EXDEV));
 
-		(void) zvol_remove_minor(name);
 		error = zfs_unmount_snap(name);
 		if (error != 0)
 			return (error);
+		(void) zvol_remove_minor(name);
 	}
 
 	return (dsl_destroy_snapshots_nvl(snaps, defer, outnvl));
@@ -3756,7 +3721,6 @@ zfs_ioc_rename(zfs_cmd_t *zc)
 {
 	boolean_t recursive = zc->zc_cookie & 1;
 	char *at;
-	int err;
 
 	zc->zc_value[sizeof (zc->zc_value) - 1] = '\0';
 	if (dataset_namecheck(zc->zc_value, NULL, NULL) != 0 ||
@@ -3786,12 +3750,7 @@ zfs_ioc_rename(zfs_cmd_t *zc)
 
 		return (error);
 	} else {
-		err = dsl_dir_rename(zc->zc_name, zc->zc_value);
-		if (!err && zc->zc_objset_type == DMU_OST_ZVOL) {
-			(void) zvol_remove_minor(zc->zc_name);
-			(void) zvol_create_minor(zc->zc_value);
-		}
-		return (err);
+		return (dsl_dir_rename(zc->zc_name, zc->zc_value));
 	}
 }
 
@@ -4604,6 +4563,12 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 		error = 1;
 	}
 #endif
+
+#ifdef _KERNEL
+	if (error == 0)
+		zvol_create_minors(tofs);
+#endif
+
 	/*
 	 * On error, restore the original props.
 	 */
@@ -6137,12 +6102,8 @@ zfs_ioctl_init(void)
 	    POOL_CHECK_SUSPENDED | POOL_CHECK_READONLY);
 
 	/*
- 	 * ZoL functions
+	 * ZoL functions
 	 */
-	zfs_ioctl_register_legacy(ZFS_IOC_CREATE_MINOR, zfs_ioc_create_minor,
-	    zfs_secpolicy_config, DATASET_NAME, B_FALSE, POOL_CHECK_NONE);
-	zfs_ioctl_register_legacy(ZFS_IOC_REMOVE_MINOR, zfs_ioc_remove_minor,
-	    zfs_secpolicy_config, DATASET_NAME, B_FALSE, POOL_CHECK_NONE);
 	zfs_ioctl_register_legacy(ZFS_IOC_EVENTS_NEXT, zfs_ioc_events_next,
 	    zfs_secpolicy_config, NO_NAME, B_FALSE, POOL_CHECK_NONE);
 	zfs_ioctl_register_legacy(ZFS_IOC_EVENTS_CLEAR, zfs_ioc_events_clear,
@@ -6328,7 +6289,7 @@ zfsdev_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 	uint_t vecnum;
 	int error, rc, len, flag = 0;
 	const zfs_ioc_vec_t *vec;
-	char saved_poolname[MAXNAMELEN];
+	char *saved_poolname;
 	nvlist_t *innvl = NULL;
 
 	vecnum = cmd - ZFS_IOC_FIRST;
@@ -6336,7 +6297,15 @@ zfsdev_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 		return (-SET_ERROR(EINVAL));
 	vec = &zfs_ioc_vec[vecnum];
 
+	/*
+	 * The registered ioctl list may be sparse, verify that either
+	 * a normal or legacy handler are registered.
+	 */
+	if (vec->zvec_func == NULL && vec->zvec_legacy_func == NULL)
+		return (-SET_ERROR(EINVAL));
+
 	zc = kmem_zalloc(sizeof (zfs_cmd_t), KM_SLEEP | KM_NODEBUG);
+	saved_poolname = kmem_alloc(MAXNAMELEN, KM_SLEEP);
 
 	error = ddi_copyin((void *)arg, zc, sizeof (zfs_cmd_t), flag);
 	if (error != 0) {
@@ -6456,6 +6425,7 @@ out:
 		(void) tsd_set(zfs_allow_log_key, strdup(saved_poolname));
 	}
 
+	kmem_free(saved_poolname, MAXNAMELEN);
 	kmem_free(zc, sizeof (zfs_cmd_t));
 	return (-error);
 }
@@ -6595,4 +6565,5 @@ spl_module_exit(_fini);
 MODULE_DESCRIPTION("ZFS");
 MODULE_AUTHOR(ZFS_META_AUTHOR);
 MODULE_LICENSE(ZFS_META_LICENSE);
+MODULE_VERSION(ZFS_META_VERSION "-" ZFS_META_RELEASE);
 #endif /* HAVE_SPL */

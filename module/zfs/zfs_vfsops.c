@@ -1145,10 +1145,8 @@ zfs_sb_teardown(zfs_sb_t *zsb, boolean_t unmounting)
 	mutex_enter(&zsb->z_znodes_lock);
 	for (zp = list_head(&zsb->z_all_znodes); zp != NULL;
 	    zp = list_next(&zsb->z_all_znodes, zp)) {
-		if (zp->z_sa_hdl) {
-			ASSERT(atomic_read(&ZTOI(zp)->i_count) > 0);
+		if (zp->z_sa_hdl)
 			zfs_znode_dmu_fini(zp);
-		}
 	}
 	mutex_exit(&zsb->z_znodes_lock);
 
@@ -1481,7 +1479,7 @@ EXPORT_SYMBOL(zfs_suspend_fs);
 int
 zfs_resume_fs(zfs_sb_t *zsb, const char *osname)
 {
-	int err;
+	int err, err2;
 	znode_t *zp;
 	uint64_t sa_obj = 0;
 
@@ -1538,8 +1536,8 @@ zfs_resume_fs(zfs_sb_t *zsb, const char *osname)
 	mutex_enter(&zsb->z_znodes_lock);
 	for (zp = list_head(&zsb->z_all_znodes); zp;
 	    zp = list_next(&zsb->z_all_znodes, zp)) {
-		err = zfs_rezget(zp);
-		if (err) {
+		err2 = zfs_rezget(zp);
+		if (err2) {
 			remove_inode_hash(ZTOI(zp));
 			zp->z_is_stale = B_TRUE;
 		}
