@@ -1442,11 +1442,9 @@ zfs_ioc_pool_create(zfs_cmd_t *zc)
 		return (error);
 	}
 
-    printk("pool create\n");
     if ((error = zfs_get_crypto_ctx(zc->zc_name, &zc->zc_crypto, &dcc)) != 0) {
         return (error);
     }
-    printk("pool create2\n");
 
 	if (props) {
 		nvlist_t *nvl = NULL;

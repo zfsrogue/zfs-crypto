@@ -253,3 +253,17 @@ error:
 
     return (ret);
 }
+
+
+/*
+ * Empty placeholder for userland. The kernel version is in SPL
+ */
+int crypto_mech2id(char *name)
+{
+    int i;
+
+    if (!name || !*name)
+        return 0;
+
+    return 1;
+}
