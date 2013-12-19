@@ -260,8 +260,6 @@ error:
  */
 int crypto_mech2id(char *name)
 {
-    int i;
-
     if (!name || !*name)
         return 0;
 
