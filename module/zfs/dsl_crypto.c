@@ -379,6 +379,7 @@ dsl_crypto_key_unload(const char *dsname)
 	}
 	if (error != 0) {
 		dsl_dataset_rele(ds, FTAG);
+        dsl_pool_rele(dp, FTAG);
 		return (error);
 	}
 #endif

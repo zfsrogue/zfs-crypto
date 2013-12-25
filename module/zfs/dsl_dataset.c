@@ -1740,23 +1740,23 @@ dsl_dataset_rollback_check(void *arg, dmu_tx_t *tx)
   dsl_dataset_t *ds;
   int64_t unused_refres_delta;
   int error;
-  
+
   error = dsl_dataset_hold(dp, ddra->ddra_fsname, FTAG, &ds);
   if (error != 0)
     return (error);
-  
+
   /* must not be a snapshot */
   if (dsl_dataset_is_snapshot(ds)) {
     dsl_dataset_rele(ds, FTAG);
     return (SET_ERROR(EINVAL));
   }
-  
+
   /* must have a most recent snapshot */
   if (ds->ds_phys->ds_prev_snap_txg < TXG_INITIAL) {
     dsl_dataset_rele(ds, FTAG);
     return (SET_ERROR(EINVAL));
   }
-  
+
   error = dsl_dataset_handoff_check(ds, ddra->ddra_owner, tx);
   if (error != 0) {
     dsl_dataset_rele(ds, FTAG);
@@ -1771,7 +1771,7 @@ dsl_dataset_rollback_check(void *arg, dmu_tx_t *tx)
     dsl_dataset_rele(ds, FTAG);
     return (SET_ERROR(EDQUOT));
   }
-  
+
   /*
    * When we do the clone swap, we will temporarily use more space
    * due to the refreservation (the head will no longer have any
@@ -1781,7 +1781,7 @@ dsl_dataset_rollback_check(void *arg, dmu_tx_t *tx)
    */
   unused_refres_delta = (int64_t)MIN(ds->ds_reserved,
 				     ds->ds_phys->ds_unique_bytes);
-  
+
   if (unused_refres_delta > 0 &&
       unused_refres_delta >
       dsl_dir_space_available(ds->ds_dir, NULL, 0, TRUE)) {
@@ -1835,7 +1835,7 @@ dsl_dataset_rollback_sync(void *arg, dmu_tx_t *tx)
  * notes above zfs_suspend_fs() for further details.
  */
 int
-dsl_dataset_rollback(const char *fsname, void *owner, 
+dsl_dataset_rollback(const char *fsname, void *owner,
 		     dsl_crypto_ctx_t *dcc,
 		     nvlist_t *result)
 {
