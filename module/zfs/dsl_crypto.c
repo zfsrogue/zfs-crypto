@@ -381,6 +381,7 @@ dsl_crypto_key_unload(const char *dsname)
 	}
 	if (error != 0) {
 		dsl_dataset_rele(ds, FTAG);
+        dsl_pool_rele(dp, FTAG);
 		return (error);
 	}
 #endif
@@ -417,9 +418,10 @@ dsl_crypto_key_load(const char *dsname, zcrypt_key_t *wrappingkey)
     if (error != 0)
         return (error);
 
-	if ((error = dsl_dataset_hold(dp, dsname, FTAG, &ds)) != 0)
+	if ((error = dsl_dataset_hold(dp, dsname, FTAG, &ds)) != 0) {
+        dsl_pool_rele(dp, FTAG);
 		return (error);
-
+    }
 	/*
 	 * This is key load not key change so if ds->ds_key is already
 	 * set we fail.
@@ -443,6 +445,7 @@ dsl_crypto_key_load(const char *dsname, zcrypt_key_t *wrappingkey)
 	 * a index property.
 	 */
 	rrw_enter(&ds->ds_dir->dd_pool->dp_config_rwlock, RW_READER, FTAG);
+
 	error = dsl_prop_get_ds(ds, zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
                             8, 1, &crypt, NULL/*, DSL_PROP_GET_EFFECTIVE*/);
 	rrw_exit(&ds->ds_dir->dd_pool->dp_config_rwlock, FTAG);
@@ -486,24 +489,36 @@ dsl_crypto_key_inherit(const char *dsname)
         return (error);
 
 	error = dsl_dataset_keystatus_byname(dp, dsname, &keystatus);
-	if (error != 0)
+	if (error != 0) {
+        dsl_pool_rele(dp, FTAG);
 		return (error);
-	if (keystatus == ZFS_CRYPT_KEY_NONE)
+    }
+	if (keystatus == ZFS_CRYPT_KEY_NONE) {
+        dsl_pool_rele(dp, FTAG);
 		return (0);
-	if (keystatus == ZFS_CRYPT_KEY_AVAILABLE)
+    }
+	if (keystatus == ZFS_CRYPT_KEY_AVAILABLE) {
+        dsl_pool_rele(dp, FTAG);
 		return (EEXIST);
+    }
 
 	error = dsl_prop_get(dsname, zfs_prop_to_name(ZFS_PROP_KEYSOURCE), 1,
 	    sizeof (keysource), &keysource, setpoint);
-	if (error != 0)
+	if (error != 0) {
+        dsl_pool_rele(dp, FTAG);
 		return (error);
+    }
 
-	if (strcmp(setpoint, dsname) == 0)
+	if (strcmp(setpoint, dsname) == 0) {
+        dsl_pool_rele(dp, FTAG);
 		return (ENOENT);
+    }
 
 	error = dsl_dataset_hold(dp, setpoint, FTAG, &ids);
-	if (error != 0)
+	if (error != 0) {
+        dsl_pool_rele(dp, FTAG);
 		return (error);
+    }
 
 	spa = dsl_dataset_get_spa(ids);
 	wrappingkey = zcrypt_key_copy(zcrypt_keystore_find_wrappingkey(spa,
@@ -606,6 +621,7 @@ dsl_crypto_key_new(const char *dsname)
 	skn = zcrypt_keystore_find_node(spa, ds->ds_object, B_FALSE);
 	if (skn == NULL) {
 		dsl_dataset_rele(ds, FTAG);
+        dsl_pool_rele(dp, FTAG);
 		return (ENOENT);
 	}
 
@@ -765,8 +781,8 @@ dsl_crypto_key_change_find(const char *dsname, void *arg)
 
 	if ((err = dmu_objset_from_ds(ds, &os)) != 0) {
 		dsl_dataset_rele(ds, kcn);
-		kmem_free(kcn, sizeof (struct kcnode));
         dsl_pool_rele(dp, FTAG);
+		kmem_free(kcn, sizeof (struct kcnode));
 		return (err);
 	}
 
@@ -800,6 +816,8 @@ dsl_crypto_key_change_find(const char *dsname, void *arg)
 	kcn->kc_ds = ds;
 	list_insert_tail(&ca->ca_nodes, kcn);
 
+    dsl_dataset_rele(ds, kcn);
+    dsl_pool_rele(dp, FTAG);
 	return (0);
 }
 
@@ -835,9 +853,11 @@ dsl_crypto_key_change(char *dsname, zcrypt_key_t *newkey, nvlist_t *props)
 	 * wrapping key.
 	 */
 	err = spa_open(dsname, &spa, FTAG);
-	if (err)
+	if (err) {
+        dsl_dataset_rele(ds, FTAG);
+        dsl_pool_rele(dp, FTAG);
 		return (err);
-
+    }
 	oldkey = zcrypt_key_copy(zcrypt_keystore_find_wrappingkey(spa,
 	    ds->ds_object));
 	if (oldkey == NULL) {
