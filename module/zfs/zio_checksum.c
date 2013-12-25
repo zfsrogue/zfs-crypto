@@ -30,7 +30,7 @@
 #include <sys/zil.h>
 #include <zfs_fletcher.h>
 
-unsigned int zfs_crypto_ignore_checksum_errors = 0; /* Disable crypto checksum checks */
+bool zfs_crypto_ignore_checksum_errors = B_FALSE; /* Disable crypto checksum checks */
 
 /*
  * Checksum vectors.
@@ -300,7 +300,7 @@ zio_checksum_error(zio_t *zio, zio_bad_cksum_t *info)
 }
 
 #if defined(_KERNEL) && defined(HAVE_SPL)
-module_param(zfs_crypto_ignore_checksum_errors, int, 0644);
+module_param(zfs_crypto_ignore_checksum_errors, bool, 0644);
 MODULE_PARM_DESC(zfs_crypto_ignore_checksum_errors,
     "Disable crypto checksum checks");
 #endif
