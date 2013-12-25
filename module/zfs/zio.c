@@ -422,7 +422,9 @@ zio_decrypt(zio_t *zio, void *data, uint64_t size, void *arg)
     uint32_t mac[3];        /* Max maclen is 96 bits */
     uint32_t iv[3];         /* Max ivlen is 96 bits */
 
-    ASSERT3U(spa_version(zio->io_spa), >=, SPA_VERSION_CRYPTO);
+    /* Disable this until SPA_VERSION_CRYPTO can be defined
+     * ASSERT3U(spa_version(zio->io_spa), >=, SPA_VERSION_CRYPTO);
+     */
 
 #if _KERNEL
 #ifdef ZFS_CRYPTO_VERBOSE
@@ -1117,7 +1119,9 @@ zio_read_bp_init(zio_t *zio)
         }
         if (BP_IS_ENCRYPTED(bp)) {
             zcrypt_key_t *key;
-            ASSERT(spa_version(zio->io_spa) >= SPA_VERSION_CRYPTO);
+	    /* Disable this until SPA_VERSION_CRYPTO can be defined
+	     * ASSERT(spa_version(zio->io_spa) >= SPA_VERSION_CRYPTO);
+	     */
 
             key = zcrypt_key_lookup(zio->io_spa,
                                     zio->io_bookmark.zb_objset, bp->blk_birth);
@@ -1316,7 +1320,9 @@ zio_write_bp_init(zio_t *zio)
      * truncated SHA256+MAC variant - force to SHA256 instead.
      */
     if (checksum == ZIO_CHECKSUM_SHA256_MAC && crypt == ZIO_CRYPT_OFF) {
-        ASSERT3U(spa_version(zio->io_spa), >=, SPA_VERSION_CRYPTO);
+      /* Disable this until SPA_VERSION_CRYPTO can be defined
+       * ASSERT3U(spa_version(zio->io_spa), >=, SPA_VERSION_CRYPTO);
+       */
         checksum = ZIO_CHECKSUM_SHA256;
     }
 
@@ -1982,8 +1988,8 @@ zio_gang_tree_issue(zio_t *pio, zio_gang_node_t *gn, blkptr_t *bp, void *data)
 	 * !spa_writable check allows for zdb_read_block()
 	 */
 	ASSERT(!spa_writeable(pio->io_spa) ||
-	    (BP_IS_ENCRYPTED(gio->io_bp) &&
-	    (BP_GET_CHECKSUM(bp) == BP_GET_CHECKSUM(gio->io_bp)) ||
+	    ((BP_IS_ENCRYPTED(gio->io_bp) &&
+	    (BP_GET_CHECKSUM(bp) == BP_GET_CHECKSUM(gio->io_bp))) ||
 	    (BP_GET_CHECKSUM(bp) == ZIO_CHECKSUM_SHA256 &&
 	    BP_GET_CRYPT(bp) == 0)) ||
 	    (BP_GET_CHECKSUM(bp) == BP_GET_CHECKSUM(gio->io_bp)));

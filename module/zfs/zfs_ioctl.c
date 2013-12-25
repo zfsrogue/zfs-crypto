@@ -4482,7 +4482,7 @@ zfs_ioc_recv(zfs_cmd_t *zc)
 		return (SET_ERROR(EBADF));
 	}
 
-    if ((zc->zc_nvlist_conf != NULL) &&
+    if ((&zc->zc_nvlist_conf != NULL) &&
         (error = get_nvlist(zc->zc_nvlist_conf, zc->zc_nvlist_conf_size,
                             zc->zc_iflags, &cmdprops)) != 0)
         goto out;

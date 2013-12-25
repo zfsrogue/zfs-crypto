@@ -3567,7 +3567,6 @@ void
 ztest_dsl_dataset_promote_busy(ztest_ds_t *zd, uint64_t id)
 {
 	objset_t *clone;
-	dsl_dataset_t *ds;
     dsl_crypto_ctx_t dcc = { 0 };
 	objset_t *os;
 	char *snap1name;
@@ -4877,11 +4876,11 @@ ztest_spa_prop_get_set(ztest_ds_t *zd, uint64_t id)
 void
 ztest_dsl_crypto(ztest_ds_t *zd, uint64_t id)
 {
-    ztest_shared_t *zs = ztest_shared;
+//    ztest_shared_t *zs = ztest_shared;
     zfs_crypt_key_status_t keystatus;
     zcrypt_key_t *wrapkey;
     int error;
-    char *name;
+    char *name = NULL;
     dsl_pool_t *dp;
 
     if (!ztest_opts.zo_crypto || zd->zd_crypt == 0 || zd->zd_crypt == ZIO_CRYPT_OFF)

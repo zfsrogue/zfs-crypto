@@ -299,7 +299,6 @@ zil_read_log_data(zilog_t *zilog, const lr_write_t *lr, void *wbuf)
 	enum zio_flag zio_flags = ZIO_FLAG_CANFAIL;
 	const blkptr_t *bp = &lr->lr_blkptr;
 	uint32_t aflags = ARC_WAIT;
-	arc_buf_t *abuf = NULL;
 	zbookmark_t zb;
 	int error;
 
