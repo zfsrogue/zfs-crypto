@@ -24,7 +24,8 @@ The crypto/api implementation is brand new, and supports "bare
 minimum" features as needed by ZFS only.
 
 
-Current support is at "proof of concept" level only. It is NOT usable.
+Current support is at "works for some" level only. It is NOT
+recomended in a commersial environment.
 
 
 Required work before Alpha:
@@ -44,7 +45,7 @@ Required work before Alpha:
 * All "// FIXME" should be inspected. In particular, known areas
   which differ are PROP_ALIAS, PROP_INHERIT, crypto vs userquota,
 
-* Removed KEY methods "https URI" (requires curl) and pkcs11 types.
+* Removed KEY method pkcs11.
 
 * Undo the POOL VERSION=30, put it back to 28, and make CRYPTO be a
   "Named Extension" instead.

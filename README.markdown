@@ -47,7 +47,7 @@ Importing a Solaris pool can be done using:
 * All "// FIXME" should be inspected. In particular, known areas
   which differ are PROP_ALIAS, PROP_INHERIT, crypto vs userquota,
 
-* Removed KEY methods "https URI" (requires curl) and pkcs11 types.
+* Removed KEY method pkcs11.
 
 
 Example 1: Ask for password.

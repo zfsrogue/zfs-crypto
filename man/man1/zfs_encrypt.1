@@ -125,6 +125,8 @@ The following properties cannot be changed after the file system is created and,
 .sp .6
 .RS 4n
 Defines the encryption algorithm and key length that is used for the encrypted dataset. The \fBon\fR value is equal to \fBaes-128-ccm\fR. The default value is \fBoff\fR. When encryption is set to a value other than \fBoff\fR, the \fBchecksum\fR property is set to \fBsha256+mac\fR and becomes \fBreadonly\fR.
+.sp
+Only \fBon\fR or \fBoff\fR is allowed for a ZVOL.
 .RE
 
 .sp
