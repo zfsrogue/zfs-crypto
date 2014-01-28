@@ -1,4 +1,3 @@
-
 Welcome to the unofficial zfs-crypto branch.
 
 To make it clear, this branch has nothing to do with Sun, Oracle,
@@ -52,6 +51,7 @@ Importing a Solaris pool can be done using:
 
 Example 1: Ask for password.
 ============================
+```
 # zfs create -o encryption=aes-256-gcm mypool/BOOM
   Enter passphrase for 'mypool/BOOM':
   Enter again:
@@ -65,10 +65,11 @@ Example 1: Ask for password.
 
 mypool  feature@async_destroy  enabled                local
 mypool  feature@encryption     active                 local
-
+```
 
 Example 2: Using a raw key file
 ============================
+```
 # dd if=/dev/urandom bs=32 count=1 > /out.key
 1+0 records in
 1+0 records out
@@ -84,21 +85,22 @@ mypool/BOOM  dedup        off                  default
 mypool/BOOM  encryption   aes-256-gcm          local
 mypool/BOOM  keysource    raw,file:///out.key  local
 mypool/BOOM  keystatus    available            -
-
+```
 
 Example 3: Using a hex key file
 ============================
+```
 # dd if=/dev/urandom bs=32 count=1 | od -A n -v -t x1 | tr -d ' \n' > /out.key
 1+0 records in
 1+0 records out
 32 bytes (32 B) copied, 1.2811e-05 s, 2.5 MB/s
 # zfs create -o encryption=aes-256-gcm -o keysource=hex,file:///out.key mypool/BOOM
-
+```
 
 ======================================================================
 striped, unencrypted
 ======================================================================
-
+```
 $ tiotest -t8 -f 200 -d /striped_zpool/
 Tiotest results for 8 concurrent io threads:
 ,----------------------------------------------------------------------.
@@ -120,12 +122,12 @@ Tiotest latency results:
 |--------------+-----------------+-----------------+----------+-----------|
 | Total        |        0.011 ms |        9.339 ms |  0.00000 |   0.00000 |
 `--------------+-----------------+-----------------+----------+-----------'
-
+```
 
 ======================================================================
 zfs-crypt aes-256-ccm
 ======================================================================
-
+```
 $ tiotest -t8 -f 200 -d /striped_zpool/fs/
 Tiotest results for 8 concurrent io threads:
 ,----------------------------------------------------------------------.
@@ -147,14 +149,14 @@ Tiotest latency results:
 |--------------+-----------------+-----------------+----------+-----------|
 | Total        |        0.016 ms |      835.720 ms |  0.00000 |   0.00000 |
 `--------------+-----------------+-----------------+----------+-----------'
-
+```
 
 ======================================================================
 LUKS volumes with plain ZFS
 ======================================================================
-
 dmcrypt/luks cipher/keysize: aes-xts-plain64, 512
 ------------------------------------------------------------------------------------
+```
 tiotest -t 8 -f 200 -d /striped_crypt/
 Tiotest results for 8 concurrent io threads:
 ,----------------------------------------------------------------------.
@@ -176,11 +178,13 @@ Tiotest latency results:
 |--------------+-----------------+-----------------+----------+-----------|
 | Total        |        0.019 ms |       69.994 ms |  0.00000 |   0.00000 |
 `--------------+-----------------+-----------------+----------+-----------'
+```
 
 
 
 dmcrypt/luks cipher/keysize: aes-cbc-essiv:sha256, 256
 -----------------------------------------------------------------------------------
+```
 tiotest -t 8 -f 200 -d /striped_crypt/
 Tiotest results for 8 concurrent io threads:
 ,----------------------------------------------------------------------.
