@@ -961,10 +961,6 @@ zil_lwb_write_init(zilog_t *zilog, lwb_t *lwb)
 	if (rzio == NULL) {
 		zilog->zl_root_zio = rzio = zio_root(zilog->zl_spa, NULL, NULL,
 		    ZIO_FLAG_CANFAIL);
-		if (zilog->zl_logbias == ZFS_LOGBIAS_LATENCY)
-			rzio->io_priority = ZIO_PRIORITY_LOG_WRITE;
-		else
-			rzio->io_priority = ZIO_PRIORITY_ASYNC_WRITE;
 	}
 
 	/* Lock so zil_sync() doesn't fastwrite_unmark after zio is created */
@@ -976,11 +972,7 @@ zil_lwb_write_init(zilog_t *zilog, lwb_t *lwb)
 		}
 		lwb->lwb_zio = zio_rewrite(zilog->zl_root_zio, zilog->zl_spa,
 		    0, &lwb->lwb_blk, lwb->lwb_buf, BP_GET_LSIZE(&lwb->lwb_blk),
-<<<<<<< HEAD
-            &zp, zil_lwb_write_done, lwb, ZIO_PRIORITY_LOG_WRITE,
-=======
 		    zil_lwb_write_done, lwb, ZIO_PRIORITY_SYNC_WRITE,
->>>>>>> upstream/master
 		    ZIO_FLAG_CANFAIL | ZIO_FLAG_DONT_PROPAGATE |
 		    ZIO_FLAG_FASTWRITE, &zb);
 	}

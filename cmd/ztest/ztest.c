@@ -5400,7 +5400,7 @@ ztest_ddt_repair(ztest_ds_t *zd, uint64_t id)
 	ztest_pattern_set(buf, psize, ~pattern);
 
 	(void) zio_wait(zio_rewrite(NULL, spa, 0, &blk,
-	    buf, psize, NULL, NULL, NULL, ZIO_PRIORITY_SYNC_WRITE,
+           buf, psize, NULL, NULL, ZIO_PRIORITY_SYNC_WRITE,
 	    ZIO_FLAG_CANFAIL | ZIO_FLAG_INDUCE_DAMAGE, NULL));
 
 	zio_buf_free(buf, psize);

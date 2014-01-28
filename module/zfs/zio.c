@@ -797,9 +797,6 @@ zio_rewrite(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp, void *data,
 	    ZIO_TYPE_WRITE, priority, flags, NULL, 0, zb,
 	    ZIO_STAGE_OPEN, ZIO_REWRITE_PIPELINE);
 
-	if (zp != NULL)
-		zio->io_prop = *zp;
-
 	return (zio);
 }
 
@@ -1814,7 +1811,7 @@ zio_rewrite_gang(zio_t *pio, blkptr_t *bp, zio_gang_node_t *gn, void *data)
 
 	if (gn != NULL) {
 		zio = zio_rewrite(pio, pio->io_spa, pio->io_txg, bp,
-		    gn->gn_gbh, SPA_GANGBLOCKSIZE, NULL, NULL, NULL,
+                   gn->gn_gbh, SPA_GANGBLOCKSIZE, NULL, NULL,
 			pio->io_priority, ZIO_GANG_CHILD_FLAGS(pio), &pio->io_bookmark);
 		/*
 		 * As we rewrite each gang header, the pipeline will compute
@@ -1837,7 +1834,7 @@ zio_rewrite_gang(zio_t *pio, blkptr_t *bp, zio_gang_node_t *gn, void *data)
 			zio->io_pipeline &= ~ZIO_VDEV_IO_STAGES;
 	} else {
 		zio = zio_rewrite(pio, pio->io_spa, pio->io_txg, bp,
-			data, BP_GET_PSIZE(bp), NULL, NULL, NULL, pio->io_priority,
+                       data, BP_GET_PSIZE(bp), NULL, NULL, pio->io_priority,
 		    ZIO_GANG_CHILD_FLAGS(pio), &pio->io_bookmark);
 	}
 
@@ -2114,7 +2111,7 @@ zio_write_gang_block(zio_t *pio)
 	 * Create the gang header.
 	 */
 	zio = zio_rewrite(pio, spa, txg, bp, gbh, SPA_GANGBLOCKSIZE,
-		NULL, NULL, NULL, pio->io_priority,
+               NULL, NULL, pio->io_priority,
 		ZIO_GANG_CHILD_FLAGS(pio), &pio->io_bookmark);
 
 	/*
