@@ -1675,13 +1675,17 @@ zfs_ioc_pool_freeze(zfs_cmd_t *zc)
 }
 
 static int
-zfs_feature_encryption(struct dsl_pool *dp, struct dsl_dataset *ds, void *arg)
+zfs_feature_encryption(const char *dsname, void *arg)
 {
 	uint64_t crypt;
 	int error;
 	dmu_tx_t *tx;
 	objset_t *os;
-    char dsname[MAXNAMELEN];
+    dsl_dataset_t *ds;
+    dsl_pool_t *dp = (dsl_pool_t *)arg;
+
+    error = dsl_dataset_hold(dp, dsname, FTAG, &ds);
+    if (error) return 0;
 
 	rrw_enter(&ds->ds_dir->dd_pool->dp_config_rwlock, RW_READER, FTAG);
 	error = dsl_prop_get_ds(ds, zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
@@ -1709,11 +1713,12 @@ zfs_feature_encryption(struct dsl_pool *dp, struct dsl_dataset *ds, void *arg)
                                  tx);
                 dmu_tx_commit(tx);
 
-                dsl_dataset_name(ds, dsname);
                 printk("feature@encryption active on '%s'\n", dsname);
             }
         } // os
     }
+
+    dsl_dataset_rele(ds, FTAG);
 
 	return (0);
 }
@@ -1724,6 +1729,7 @@ zfs_ioc_pool_upgrade(zfs_cmd_t *zc)
 	spa_t *spa;
 	int error;
     uint64_t version;
+    dsl_pool_t *dp;
 
 	if ((error = spa_open(zc->zc_name, &spa, FTAG)) != 0)
 		return (error);
@@ -1742,13 +1748,11 @@ zfs_ioc_pool_upgrade(zfs_cmd_t *zc)
         dsl_pool_t *dp;
 
         printk("Converting pool version=encryption to feature@encryption\n");
+
         error = dsl_pool_hold(zc->zc_name, FTAG, &dp);
         if (!error) {
-            VERIFY(0 == dmu_objset_find_dp(dp,
-                                           0,
-                                           zfs_feature_encryption,
-                                           NULL,
-                                         DS_FIND_CHILDREN|DS_FIND_SNAPSHOTS));
+            dmu_objset_find(zc->zc_name, zfs_feature_encryption,
+                            dp, DS_FIND_CHILDREN|DS_FIND_SNAPSHOTS);
             dsl_pool_rele(dp, FTAG);
         }
     }
@@ -4447,7 +4451,7 @@ zfs_ioc_recv(zfs_cmd_t *zc)
         goto out;
 
     if ((error = zfs_get_crypto_ctx(zc->zc_name, &zc->zc_crypto, &dcc)) != 0) {
-        return (error);
+        goto out;
     }
 
 	VERIFY(nvlist_alloc(&errors, NV_UNIQUE_NAME, KM_SLEEP) == 0);
