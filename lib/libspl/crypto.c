@@ -11,6 +11,11 @@
 
 
 
+int crypto_mech2id(char *name)
+{
+    return 0;
+}
+
 
 /*
  * HMAC-SHA-1 (from RFC 2202).

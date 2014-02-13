@@ -473,13 +473,12 @@ dmu_send_impl(void *tag, dsl_pool_t *dp, dsl_dataset_t *ds,
 	dmu_sendarg_t *dsp;
 	int err;
 	uint64_t fromtxg = 0;
-    uint64_t featureflags = 0;
 
 	if (fromds != NULL && !dsl_dataset_is_before(ds, fromds)) {
 		dsl_dataset_rele(fromds, tag);
 		dsl_dataset_rele(ds, tag);
 		dsl_pool_rele(dp, tag);
-		return (EXDEV);
+		return (SET_ERROR(EXDEV));
 	}
 
 	err = dmu_objset_from_ds(ds, &os);
@@ -506,30 +505,28 @@ dmu_send_impl(void *tag, dsl_pool_t *dp, dsl_dataset_t *ds,
 				dsl_dataset_rele(fromds, tag);
 			dsl_dataset_rele(ds, tag);
 			dsl_pool_rele(dp, tag);
-			return (EINVAL);
+			return (SET_ERROR(EINVAL));
 		}
 		if (version >= ZPL_VERSION_SA) {
 			DMU_SET_FEATUREFLAGS(
 			    drr->drr_u.drr_begin.drr_versioninfo,
 			    DMU_BACKUP_FEATURE_SA_SPILL);
 		}
+        crypt = ZIO_CRYPT_OFF;
         rrw_enter(&ds->ds_dir->dd_pool->dp_config_rwlock, RW_READER, FTAG);
-        if (dsl_prop_get_ds(ds,
-                            zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &crypt, NULL
-                            /*,DSL_PROP_GET_EFFECTIVE*/) != 0) {
-            rrw_exit(&ds->ds_dir->dd_pool->dp_config_rwlock, FTAG);
-            return (EINVAL);
-        }
+        dsl_prop_get_ds(ds,
+                        zfs_prop_to_name(ZFS_PROP_ENCRYPTION), 8, 1, &crypt, NULL
+                        /*,DSL_PROP_GET_EFFECTIVE*/);
         rrw_exit(&ds->ds_dir->dd_pool->dp_config_rwlock, FTAG);
         if (crypt != ZIO_CRYPT_OFF) {
-            featureflags |= DMU_BACKUP_FEATURE_ENCRYPT;
+			DMU_SET_FEATUREFLAGS(
+			    drr->drr_u.drr_begin.drr_versioninfo,
+			    DMU_BACKUP_FEATURE_ENCRYPT);
         }
 
 	}
 #endif
 
-    DMU_SET_FEATUREFLAGS(drr->drr_u.drr_begin.drr_versioninfo,
-                         featureflags);
 	drr->drr_u.drr_begin.drr_creation_time =
 	    ds->ds_phys->ds_creation_time;
 	drr->drr_u.drr_begin.drr_type = dmu_objset_type(os);
@@ -573,9 +570,6 @@ dmu_send_impl(void *tag, dsl_pool_t *dp, dsl_dataset_t *ds,
 		err = dsp->dsa_err;
 		goto out;
 	}
-
-	dsl_dataset_long_hold(ds, FTAG);
-	dsl_pool_rele(dp, tag);
 
 	err = traverse_dataset(ds, fromtxg, TRAVERSE_PRE | TRAVERSE_PREFETCH,
 	    backup_cb, dsp);
@@ -851,11 +845,9 @@ dmu_recv_verify_features(dsl_dataset_t *ds, struct drr_begin *drrb)
         /*
          * Verify stream came from an encrypted dataset if encryption is on.
          */
-        rrw_enter(&ds->ds_dir->dd_pool->dp_config_rwlock, RW_READER, FTAG);
         VERIFY(0 == dsl_prop_get_ds(ds, zfs_prop_to_name(ZFS_PROP_ENCRYPTION),
                                     8, 1, &crypt, NULL
                                     /*, DSL_PROP_GET_EFFECTIVE*/)); //FIXME
-        rrw_exit(&ds->ds_dir->dd_pool->dp_config_rwlock, FTAG);
         if ((featureflags & DMU_BACKUP_FEATURE_ENCRYPT) &&
             !spa_feature_is_enabled(dsl_dataset_get_spa(ds),
                                     &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
@@ -886,27 +878,27 @@ dmu_recv_begin_check(void *arg, dmu_tx_t *tx)
 	    DMU_COMPOUNDSTREAM ||
 	    drrb->drr_type >= DMU_OST_NUMTYPES ||
 	    ((flags & DRR_FLAG_CLONE) && drba->drba_origin == NULL))
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	/* Verify pool version supports SA if SA_SPILL feature set */
 	if ((DMU_GET_FEATUREFLAGS(drrb->drr_versioninfo) &
 	    DMU_BACKUP_FEATURE_SA_SPILL) &&
 	    spa_version(dp->dp_spa) < SPA_VERSION_SA) {
-		return (ENOTSUP);
+		return (SET_ERROR(ENOTSUP));
 	}
 
 	error = dsl_dataset_hold(dp, tofs, FTAG, &ds);
 	if (error == 0) {
         if (!dmu_recv_verify_features(ds, drrb)) {
-            dsl_dataset_rele(ds, dmu_recv_tag);
-            return (ENOTSUP);
+            dsl_dataset_rele(ds, FTAG);
+            return (SET_ERROR(ENOTSUP));
         }
 		/* target fs already exists; recv into temp clone */
 
 		/* Can't recv a clone into an existing fs */
 		if (flags & DRR_FLAG_CLONE) {
 			dsl_dataset_rele(ds, FTAG);
-			return (EINVAL);
+			return (SET_ERROR(EINVAL));
 		}
 
 		error = recv_begin_check_existing_impl(drba, ds, fromguid);
@@ -978,8 +970,14 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 	error = dsl_dataset_hold(dp, tofs, FTAG, &ds);
 	if (error == 0) {
 		/* create temporary clone */
+		dsl_dataset_t *snap = NULL;
+		if (drba->drba_snapobj != 0) {
+			VERIFY0(dsl_dataset_hold_obj(dp,
+			    drba->drba_snapobj, FTAG, &snap));
+		}
 		dsobj = dsl_dataset_create_sync(ds->ds_dir, recv_clone_name,
-		    ds->ds_prev, drba->drba_dcc, crflags, drba->drba_cred, tx);
+                     snap, drba->drba_dcc, crflags, drba->drba_cred, tx);
+		dsl_dataset_rele(snap, FTAG);
 		dsl_dataset_rele(ds, FTAG);
 	} else {
 		dsl_dir_t *dd;
@@ -1019,8 +1017,6 @@ dmu_recv_begin_sync(void *arg, dmu_tx_t *tx)
 
 	drba->drba_cookie->drc_ds = newds;
 
-	spa_history_log_internal(dp->dp_spa, "reply_sync", tx,
-                             "dataset = %lld", dsobj);
 	spa_history_log_internal_ds(newds, "receive", tx, "");
 
 }
@@ -1047,7 +1043,7 @@ dmu_recv_begin(char *tofs, char *tosnap, struct drr_begin *drrb,
 	if (drrb->drr_magic == BSWAP_64(DMU_BACKUP_MAGIC))
 		drc->drc_byteswap = B_TRUE;
 	else if (drrb->drr_magic != DMU_BACKUP_MAGIC)
-		return (EINVAL);
+		return (SET_ERROR(EINVAL));
 
 	drr = kmem_zalloc(sizeof (dmu_replay_record_t), KM_SLEEP);
 	drr->drr_type = DRR_BEGIN;
