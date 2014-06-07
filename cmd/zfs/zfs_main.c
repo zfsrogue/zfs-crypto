@@ -21,7 +21,7 @@
 
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2013 by Delphix. All rights reserved.
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
  * Copyright (c) 2013 Steven Hartland.  All rights reserved.
  * Copyright 2013 Nexenta Systems, Inc. All rights reserved.
@@ -666,10 +666,26 @@ zfs_do_clone(int argc, char **argv)
 	/* create the mountpoint if necessary */
 	if (ret == 0) {
 		zfs_handle_t *clone;
+		int canmount = ZFS_CANMOUNT_OFF;
+
+		if (log_history) {
+			(void) zpool_log_history(g_zfs, history_str);
+			log_history = B_FALSE;
+		}
 
 		clone = zfs_open(g_zfs, argv[1], ZFS_TYPE_DATASET);
 		if (clone != NULL) {
-			if (zfs_get_type(clone) != ZFS_TYPE_VOLUME)
+			/*
+			 * if the user doesn't want the dataset automatically
+			 * mounted, then skip the mount/share step.
+			 */
+			if (zfs_prop_valid_for_type(ZFS_PROP_CANMOUNT,
+			    zfs_get_type(clone), B_FALSE))
+				canmount = zfs_prop_get_int(clone,
+				    ZFS_PROP_CANMOUNT);
+
+			if (zfs_get_type(clone) != ZFS_TYPE_VOLUME &&
+			    canmount == ZFS_CANMOUNT_ON)
 				if ((ret = zfs_mount(clone, NULL, 0)) == 0)
 					ret = zfs_share(clone);
 			zfs_close(clone);
@@ -846,6 +862,11 @@ zfs_do_create(int argc, char **argv)
 	if (zfs_create(g_zfs, argv[0], type, props) != 0)
 		goto error;
 
+	if (log_history) {
+		(void) zpool_log_history(g_zfs, history_str);
+		log_history = B_FALSE;
+	}
+
 	if ((zhp = zfs_open(g_zfs, argv[0], ZFS_TYPE_DATASET)) == NULL)
 		goto error;
 
@@ -854,7 +875,7 @@ zfs_do_create(int argc, char **argv)
 	 * if the user doesn't want the dataset automatically mounted,
 	 * then skip the mount/share step
 	 */
-	if (zfs_prop_valid_for_type(ZFS_PROP_CANMOUNT, type))
+	if (zfs_prop_valid_for_type(ZFS_PROP_CANMOUNT, type, B_FALSE))
 		canmount = zfs_prop_get_int(zhp, ZFS_PROP_CANMOUNT);
 
 	/*
@@ -1437,7 +1458,7 @@ get_callback(zfs_handle_t *zhp, int depth, void *data)
 				if (pl->pl_all)
 					continue;
 				if (!zfs_prop_valid_for_type(pl->pl_prop,
-				    ZFS_TYPE_DATASET)) {
+				    ZFS_TYPE_DATASET, B_FALSE)) {
 					(void) fprintf(stderr,
 					    gettext("No such property '%s'\n"),
 					    zfs_prop_to_name(pl->pl_prop));
@@ -1780,7 +1801,7 @@ inherit_recurse_cb(zfs_handle_t *zhp, int depth, void *data)
 	 * are not valid for this type of dataset.
 	 */
 	if (prop != ZPROP_INVAL &&
-	    !zfs_prop_valid_for_type(prop, zfs_get_type(zhp)))
+	    !zfs_prop_valid_for_type(prop, zfs_get_type(zhp), B_FALSE))
 		return (0);
 
     return (inherit_cb(zhp, depth, data));
@@ -2150,7 +2171,7 @@ static int us_type_bits[] = {
 	USTYPE_SMB_USR,
 	USTYPE_ALL
 };
-static char *us_type_names[] = { "posixgroup", "posxiuser", "smbgroup",
+static char *us_type_names[] = { "posixgroup", "posixuser", "smbgroup",
 	"smbuser", "all" };
 
 typedef struct us_node {
@@ -2898,13 +2919,13 @@ print_dataset(zfs_handle_t *zhp, list_cbdata_t *cb)
 
 		if (pl->pl_prop == ZFS_PROP_NAME) {
 			(void) strlcpy(property, zfs_get_name(zhp),
-			    sizeof(property));
+			    sizeof (property));
 			propstr = property;
 			right_justify = zfs_prop_align_right(pl->pl_prop);
 		} else if (pl->pl_prop != ZPROP_INVAL) {
 			if (zfs_prop_get(zhp, pl->pl_prop, property,
 			    sizeof (property), NULL, NULL, 0,
-                            cb->cb_literal) != 0)
+			    cb->cb_literal) != 0)
 				propstr = "-";
 			else
 				propstr = property;
@@ -5889,7 +5910,11 @@ share_mount(int op, int argc, char **argv)
 		 * display any active ZFS mounts.  We hide any snapshots, since
 		 * they are controlled automatically.
 		 */
-		rewind(mnttab_file);
+
+		/* Reopen MNTTAB to prevent reading stale data from open file */
+		if (freopen(MNTTAB, "r", mnttab_file) == NULL)
+			return (ENOENT);
+
 		while (getmntent(mnttab_file, &entry) == 0) {
 			if (strcmp(entry.mnt_fstype, MNTTYPE_ZFS) != 0 ||
 			    strchr(entry.mnt_special, '@') != NULL)
@@ -5992,7 +6017,11 @@ unshare_unmount_path(int op, char *path, int flags, boolean_t is_manual)
 	/*
 	 * Search for the given (major,minor) pair in the mount table.
 	 */
-	rewind(mnttab_file);
+
+	/* Reopen MNTTAB to prevent reading stale data from open file */
+	if (freopen(MNTTAB, "r", mnttab_file) == NULL)
+		return (ENOENT);
+
 	while ((ret = getextmntent(mnttab_file, &entry, 0)) == 0) {
 		if (entry.mnt_major == major(statbuf.st_dev) &&
 		    entry.mnt_minor == minor(statbuf.st_dev))
@@ -6146,7 +6175,10 @@ unshare_unmount(int op, int argc, char **argv)
 		    ((tree = uu_avl_create(pool, NULL, UU_DEFAULT)) == NULL))
 			nomem();
 
-		rewind(mnttab_file);
+		/* Reopen MNTTAB to prevent reading stale data from open file */
+		if (freopen(MNTTAB, "r", mnttab_file) == NULL)
+			return (ENOENT);
+
 		while (getmntent(mnttab_file, &entry) == 0) {
 
 			/* ignore non-ZFS entries */
@@ -6711,7 +6743,7 @@ main(int argc, char **argv)
 	/*
 	 * Run the appropriate command.
 	 */
-	libzfs_mnttab_cache(g_zfs, B_FALSE);
+	libzfs_mnttab_cache(g_zfs, B_TRUE);
 	if (find_command_idx(cmdname, &i) == 0) {
 		current_command = &command_table[i];
 		ret = command_table[i].func(argc - 1, argv + 1);
@@ -6725,10 +6757,11 @@ main(int argc, char **argv)
 		usage(B_FALSE);
 		ret = 1;
 	}
-	libzfs_fini(g_zfs);
 
 	if (ret == 0 && log_history)
 		(void) zpool_log_history(g_zfs, history_str);
+
+	libzfs_fini(g_zfs);
 
 	/*
 	 * The 'ZFS_ABORT' environment variable causes us to dump core on exit

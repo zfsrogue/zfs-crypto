@@ -251,7 +251,7 @@ sa_cache_fini(void)
 void *
 sa_spill_alloc(int flags)
 {
-	return kmem_cache_alloc(spill_cache, flags);
+	return (kmem_cache_alloc(spill_cache, flags));
 }
 
 void
@@ -594,7 +594,7 @@ sa_find_sizes(sa_os_t *sa, sa_bulk_attr_t *attr_desc, int attr_count,
 	ASSERT(IS_P2ALIGNED(full_space, 8));
 
 	for (i = 0; i != attr_count; i++) {
-		boolean_t is_var_sz;
+		boolean_t is_var_sz, might_spill_here;
 
 		*total = P2ROUNDUP(*total, 8);
 		*total += attr_desc[i].sa_length;
@@ -606,8 +606,14 @@ sa_find_sizes(sa_os_t *sa, sa_bulk_attr_t *attr_desc, int attr_count,
 			var_size++;
 		}
 
+		might_spill_here =
+		    buftype == SA_BONUS && *index == -1 &&
+		    (*total + P2ROUNDUP(hdrsize, 8)) >
+		    (full_space - sizeof (blkptr_t));
+
 		if (is_var_sz && var_size > 1) {
-			/* Don't worry that the spill block might overflow.
+			/*
+			 * Don't worry that the spill block might overflow.
 			 * It will be resized if needed in sa_build_layouts().
 			 */
 			if (buftype == SA_SPILL ||
@@ -621,7 +627,7 @@ sa_find_sizes(sa_os_t *sa, sa_bulk_attr_t *attr_desc, int attr_count,
 				 * spill-over.
 				 */
 				hdrsize += sizeof (uint16_t);
-				if (*index != -1)
+				if (*index != -1 || might_spill_here)
 					extra_hdrsize += sizeof (uint16_t);
 			} else {
 				ASSERT(buftype == SA_BONUS);
@@ -638,11 +644,8 @@ sa_find_sizes(sa_os_t *sa, sa_bulk_attr_t *attr_desc, int attr_count,
 		 * space.  The sum is used later for sizing bonus
 		 * and spill buffer.
 		 */
-		if (buftype == SA_BONUS && *index == -1 &&
-		    (*total + P2ROUNDUP(hdrsize, 8)) >
-		    (full_space - sizeof (blkptr_t))) {
+		if (might_spill_here)
 			*index = i;
-		}
 
 		if ((*total + P2ROUNDUP(hdrsize, 8)) > full_space &&
 		    buftype == SA_BONUS)
@@ -1145,7 +1148,8 @@ sa_tear_down(objset_t *os)
 	sa_free_attr_table(sa);
 
 	cookie = NULL;
-	while ((layout = avl_destroy_nodes(&sa->sa_layout_hash_tree, &cookie))){
+	while ((layout =
+	    avl_destroy_nodes(&sa->sa_layout_hash_tree, &cookie))) {
 		sa_idx_tab_t *tab;
 		while ((tab = list_head(&layout->lot_idx_tab))) {
 			ASSERT(refcount_count(&tab->sa_refcount));
@@ -1154,7 +1158,7 @@ sa_tear_down(objset_t *os)
 	}
 
 	cookie = NULL;
-	while ((layout = avl_destroy_nodes(&sa->sa_layout_num_tree, &cookie))){
+	while ((layout = avl_destroy_nodes(&sa->sa_layout_num_tree, &cookie))) {
 		kmem_free(layout->lot_attrs,
 		    sizeof (sa_attr_type_t) * layout->lot_attr_count);
 		kmem_free(layout, sizeof (sa_lot_t));
@@ -1733,25 +1737,30 @@ sa_modify_attrs(sa_handle_t *hdl, sa_attr_type_t newattr,
 	hdr = SA_GET_HDR(hdl, SA_BONUS);
 	idx_tab = SA_IDX_TAB_GET(hdl, SA_BONUS);
 	for (; k != 2; k++) {
-		/* iterate over each attribute in layout */
+		/*
+		 * Iterate over each attribute in layout.  Fetch the
+		 * size of variable-length attributes needing rewrite
+		 * from sa_lengths[].
+		 */
 		for (i = 0, length_idx = 0; i != count; i++) {
 			sa_attr_type_t attr;
 
 			attr = idx_tab->sa_layout->lot_attrs[i];
+			length = SA_REGISTERED_LEN(sa, attr);
 			if (attr == newattr) {
+				if (length == 0)
+					++length_idx;
 				if (action == SA_REMOVE) {
 					j++;
 					continue;
 				}
-				ASSERT(SA_REGISTERED_LEN(sa, attr) == 0);
+				ASSERT(length == 0);
 				ASSERT(action == SA_REPLACE);
 				SA_ADD_BULK_ATTR(attr_desc, j, attr,
 				    locator, datastart, buflen);
 			} else {
-				length = SA_REGISTERED_LEN(sa, attr);
-				if (length == 0) {
+				if (length == 0)
 					length = hdr->sa_lengths[length_idx++];
-				}
 
 				SA_ADD_BULK_ATTR(attr_desc, j, attr,
 				    NULL, (void *)
@@ -1773,7 +1782,7 @@ sa_modify_attrs(sa_handle_t *hdl, sa_attr_type_t newattr,
 			length = buflen;
 		}
 		SA_ADD_BULK_ATTR(attr_desc, j, newattr, locator,
-		    datastart, buflen);
+		    datastart, length);
 	}
 
 	error = sa_build_layouts(hdl, attr_desc, attr_count, tx);

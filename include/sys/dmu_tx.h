@@ -130,10 +130,8 @@ typedef struct dmu_tx_stats {
 	kstat_named_t dmu_tx_error;
 	kstat_named_t dmu_tx_suspended;
 	kstat_named_t dmu_tx_group;
-	kstat_named_t dmu_tx_how;
 	kstat_named_t dmu_tx_memory_reserve;
 	kstat_named_t dmu_tx_memory_reclaim;
-	kstat_named_t dmu_tx_memory_inflight;
 	kstat_named_t dmu_tx_dirty_throttle;
 	kstat_named_t dmu_tx_dirty_delay;
 	kstat_named_t dmu_tx_dirty_over_max;
@@ -142,9 +140,9 @@ typedef struct dmu_tx_stats {
 
 extern dmu_tx_stats_t dmu_tx_stats;
 
-#define DMU_TX_STAT_INCR(stat, val) \
+#define	DMU_TX_STAT_INCR(stat, val) \
     atomic_add_64(&dmu_tx_stats.stat.value.ui64, (val));
-#define DMU_TX_STAT_BUMP(stat) \
+#define	DMU_TX_STAT_BUMP(stat) \
     DMU_TX_STAT_INCR(stat, 1);
 
 /*

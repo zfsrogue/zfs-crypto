@@ -235,13 +235,9 @@ zfs_close(struct inode *ip, int flag, cred_t *cr)
 	ZFS_ENTER(zsb);
 	ZFS_VERIFY_ZP(zp);
 
-	/*
-	 * Zero the synchronous opens in the znode.  Under Linux the
-	 * zfs_close() hook is not symmetric with zfs_open(), it is
-	 * only called once when the last reference is dropped.
-	 */
+	/* Decrement the synchronous opens in the znode */
 	if (flag & O_SYNC)
-		zp->z_sync_cnt = 0;
+		atomic_dec_32(&zp->z_sync_cnt);
 
 	if (!zfs_has_ctldir(zp) && zsb->z_vscan && S_ISREG(ip->i_mode) &&
 	    !(zp->z_pflags & ZFS_AV_QUARANTINED) && zp->z_size > 0)
@@ -2396,6 +2392,8 @@ zfs_getattr_fast(struct inode *ip, struct kstat *sp)
 {
 	znode_t *zp = ITOZ(ip);
 	zfs_sb_t *zsb = ITOZSB(ip);
+	uint32_t blksize;
+	u_longlong_t nblocks;
 
 	ZFS_ENTER(zsb);
 	ZFS_VERIFY_ZP(zp);
@@ -2405,7 +2403,10 @@ zfs_getattr_fast(struct inode *ip, struct kstat *sp)
 	generic_fillattr(ip, sp);
 	ZFS_TIME_DECODE(&sp->atime, zp->z_atime);
 
-	sa_object_size(zp->z_sa_hdl, (uint32_t *)&sp->blksize, &sp->blocks);
+	sa_object_size(zp->z_sa_hdl, &blksize, &nblocks);
+	sp->blksize = blksize;
+	sp->blocks = nblocks;
+
 	if (unlikely(zp->z_blksz == 0)) {
 		/*
 		 * Block size hasn't been set; suggest maximal I/O transfers.
@@ -2504,11 +2505,11 @@ zfs_setattr(struct inode *ip, vattr_t *vap, int flags, cred_t *cr)
 	 */
 	xoap = xva_getxoptattr(xvap);
 
-	tmpxvattr = kmem_alloc(sizeof(xvattr_t), KM_SLEEP);
+	tmpxvattr = kmem_alloc(sizeof (xvattr_t), KM_SLEEP);
 	xva_init(tmpxvattr);
 
-	bulk = kmem_alloc(sizeof(sa_bulk_attr_t) * 7, KM_SLEEP);
-	xattr_bulk = kmem_alloc(sizeof(sa_bulk_attr_t) * 7, KM_SLEEP);
+	bulk = kmem_alloc(sizeof (sa_bulk_attr_t) * 7, KM_SLEEP);
+	xattr_bulk = kmem_alloc(sizeof (sa_bulk_attr_t) * 7, KM_SLEEP);
 
 	/*
 	 * Immutable files can only alter immutable bit and atime
@@ -2532,8 +2533,10 @@ zfs_setattr(struct inode *ip, vattr_t *vap, int flags, cred_t *cr)
 	 * once large timestamps are fully supported.
 	 */
 	if (mask & (ATTR_ATIME | ATTR_MTIME)) {
-		if (((mask & ATTR_ATIME) && TIMESPEC_OVERFLOW(&vap->va_atime)) ||
-		    ((mask & ATTR_MTIME) && TIMESPEC_OVERFLOW(&vap->va_mtime))) {
+		if (((mask & ATTR_ATIME) &&
+		    TIMESPEC_OVERFLOW(&vap->va_atime)) ||
+		    ((mask & ATTR_MTIME) &&
+		    TIMESPEC_OVERFLOW(&vap->va_mtime))) {
 			err = EOVERFLOW;
 			goto out3;
 		}
@@ -3044,9 +3047,9 @@ out2:
 		zil_commit(zilog, 0);
 
 out3:
-	kmem_free(xattr_bulk, sizeof(sa_bulk_attr_t) * 7);
-	kmem_free(bulk, sizeof(sa_bulk_attr_t) * 7);
-	kmem_free(tmpxvattr, sizeof(xvattr_t));
+	kmem_free(xattr_bulk, sizeof (sa_bulk_attr_t) * 7);
+	kmem_free(bulk, sizeof (sa_bulk_attr_t) * 7);
+	kmem_free(tmpxvattr, sizeof (xvattr_t));
 	ZFS_EXIT(zsb);
 	return (err);
 }
@@ -3881,9 +3884,9 @@ zfs_putpage(struct inode *ip, struct page *pp, struct writeback_control *wbc)
 
 	ASSERT(PageLocked(pp));
 
-	pgoff = page_offset(pp);     /* Page byte-offset in file */
-	offset = i_size_read(ip);    /* File length in bytes */
-	pglen = MIN(PAGE_CACHE_SIZE, /* Page length in bytes */
+	pgoff = page_offset(pp);	/* Page byte-offset in file */
+	offset = i_size_read(ip);	/* File length in bytes */
+	pglen = MIN(PAGE_CACHE_SIZE,	/* Page length in bytes */
 	    P2ROUNDUP(offset, PAGE_CACHE_SIZE)-pgoff);
 
 	/* Page is beyond end of file */
@@ -4092,17 +4095,17 @@ EXPORT_SYMBOL(zfs_seek);
 static int
 zfs_fillpage(struct inode *ip, struct page *pl[], int nr_pages)
 {
-	znode_t	    *zp = ITOZ(ip);
-	zfs_sb_t    *zsb = ITOZSB(ip);
-	objset_t    *os;
+	znode_t *zp = ITOZ(ip);
+	zfs_sb_t *zsb = ITOZSB(ip);
+	objset_t *os;
 	struct page *cur_pp;
-	u_offset_t  io_off, total;
-	size_t      io_len;
-	loff_t      i_size;
-	unsigned    page_idx;
-	int         err;
+	u_offset_t io_off, total;
+	size_t io_len;
+	loff_t i_size;
+	unsigned page_idx;
+	int err;
 
-	os     = zsb->z_os;
+	os = zsb->z_os;
 	io_len = nr_pages << PAGE_CACHE_SHIFT;
 	i_size = i_size_read(ip);
 	io_off = page_offset(pl[0]);

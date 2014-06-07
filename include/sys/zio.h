@@ -127,7 +127,7 @@ enum zio_compress {
 /*
  * Default Linux timeout for a sd device.
  */
-#define ZIO_DELAY_MAX			(30 * MILLISEC)
+#define	ZIO_DELAY_MAX			(30 * MILLISEC)
 
 #define	ZIO_FAILURE_MODE_WAIT		0
 #define	ZIO_FAILURE_MODE_CONTINUE	1
@@ -282,7 +282,6 @@ struct zbookmark {
 	uint64_t	zb_object;
 	int64_t		zb_level;
 	uint64_t	zb_blkid;
-	char *		zb_func;
 };
 
 #define	SET_BOOKMARK(zb, objset, object, level, blkid)  \
@@ -291,7 +290,6 @@ struct zbookmark {
 	(zb)->zb_object = object;                       \
 	(zb)->zb_level = level;                         \
 	(zb)->zb_blkid = blkid;                         \
-	(zb)->zb_func = FTAG;                           \
 }
 
 #define	ZB_DESTROYED_OBJSET	(-1ULL)

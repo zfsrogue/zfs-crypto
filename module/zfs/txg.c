@@ -377,8 +377,8 @@ txg_quiesce(dsl_pool_t *dp, uint64_t txg)
 	tx->tx_open_txg++;
 	tx->tx_open_time = gethrtime();
 
-	spa_txg_history_set(dp->dp_spa, txg, TXG_STATE_OPEN, gethrtime());
-	spa_txg_history_add(dp->dp_spa, tx->tx_open_txg);
+	spa_txg_history_set(dp->dp_spa, txg, TXG_STATE_OPEN, tx->tx_open_time);
+	spa_txg_history_add(dp->dp_spa, tx->tx_open_txg, tx->tx_open_time);
 
 	DTRACE_PROBE2(txg__quiescing, dsl_pool_t *, dp, uint64_t, txg);
 	DTRACE_PROBE2(txg__opened, dsl_pool_t *, dp, uint64_t, tx->tx_open_txg);
@@ -480,7 +480,7 @@ txg_sync_thread(dsl_pool_t *dp)
 	tx_state_t *tx = &dp->dp_tx;
 	callb_cpr_t cpr;
 	vdev_stat_t *vs1, *vs2;
-	uint64_t start, delta;
+	clock_t start, delta;
 
 #ifdef _KERNEL
 	/*
@@ -493,13 +493,14 @@ txg_sync_thread(dsl_pool_t *dp)
 
 	txg_thread_enter(tx, &cpr);
 
-	vs1 = kmem_alloc(sizeof(vdev_stat_t), KM_PUSHPAGE);
-	vs2 = kmem_alloc(sizeof(vdev_stat_t), KM_PUSHPAGE);
+	vs1 = kmem_alloc(sizeof (vdev_stat_t), KM_PUSHPAGE);
+	vs2 = kmem_alloc(sizeof (vdev_stat_t), KM_PUSHPAGE);
 
 	start = delta = 0;
 	for (;;) {
-		uint64_t timer, timeout;
+		clock_t timer, timeout;
 		uint64_t txg;
+		uint64_t ndirty;
 
 		timeout = zfs_txg_timeout * hz;
 
@@ -533,8 +534,8 @@ txg_sync_thread(dsl_pool_t *dp)
 		}
 
 		if (tx->tx_exiting) {
-			kmem_free(vs2, sizeof(vdev_stat_t));
-			kmem_free(vs1, sizeof(vdev_stat_t));
+			kmem_free(vs2, sizeof (vdev_stat_t));
+			kmem_free(vs1, sizeof (vdev_stat_t));
 			txg_thread_exit(tx, &cpr, &tx->tx_sync_thread);
 		}
 
@@ -554,6 +555,10 @@ txg_sync_thread(dsl_pool_t *dp)
 		dprintf("txg=%llu quiesce_txg=%llu sync_txg=%llu\n",
 		    txg, tx->tx_quiesce_txg_waiting, tx->tx_sync_txg_waiting);
 		mutex_exit(&tx->tx_sync_lock);
+
+		spa_txg_history_set(spa, txg, TXG_STATE_WAIT_FOR_SYNC,
+		    gethrtime());
+		ndirty = dp->dp_dirty_pertxg[txg & TXG_MASK];
 
 		start = ddi_get_lbolt();
 		spa_sync(spa, txg);
@@ -576,7 +581,7 @@ txg_sync_thread(dsl_pool_t *dp)
 		    vs2->vs_bytes[ZIO_TYPE_WRITE]-vs1->vs_bytes[ZIO_TYPE_WRITE],
 		    vs2->vs_ops[ZIO_TYPE_READ]-vs1->vs_ops[ZIO_TYPE_READ],
 		    vs2->vs_ops[ZIO_TYPE_WRITE]-vs1->vs_ops[ZIO_TYPE_WRITE],
-		    dp->dp_dirty_pertxg[txg & TXG_MASK]);
+		    ndirty);
 		spa_txg_history_set(spa, txg, TXG_STATE_SYNCED, gethrtime());
 	}
 }

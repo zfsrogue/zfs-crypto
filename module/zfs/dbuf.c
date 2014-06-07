@@ -263,7 +263,10 @@ dbuf_evict_user(dmu_buf_impl_t *db)
 boolean_t
 dbuf_is_metadata(dmu_buf_impl_t *db)
 {
-	if (db->db_level > 0) {
+	/*
+	 * Consider indirect blocks and spill blocks to be meta data.
+	 */
+	if (db->db_level > 0 || db->db_blkid == DMU_SPILL_BLKID) {
 		return (B_TRUE);
 	} else {
 		boolean_t is_metadata;
@@ -305,8 +308,10 @@ dbuf_init(void)
 retry:
 	h->hash_table_mask = hsize - 1;
 #if defined(_KERNEL) && defined(HAVE_SPL)
-	/* Large allocations which do not require contiguous pages
-	 * should be using vmem_alloc() in the linux kernel */
+	/*
+	 * Large allocations which do not require contiguous pages
+	 * should be using vmem_alloc() in the linux kernel
+	 */
 	h->hash_table = vmem_zalloc(hsize * sizeof (void *), KM_PUSHPAGE);
 #else
 	h->hash_table = kmem_zalloc(hsize * sizeof (void *), KM_NOSLEEP);
@@ -339,8 +344,10 @@ dbuf_fini(void)
 	for (i = 0; i < DBUF_MUTEXES; i++)
 		mutex_destroy(&h->hash_mutexes[i]);
 #if defined(_KERNEL) && defined(HAVE_SPL)
-	/* Large allocations which do not require contiguous pages
-	 * should be using vmem_free() in the linux kernel */
+	/*
+	 * Large allocations which do not require contiguous pages
+	 * should be using vmem_free() in the linux kernel
+	 */
 	vmem_free(h->hash_table, (h->hash_table_mask + 1) * sizeof (void *));
 #else
 	kmem_free(h->hash_table, (h->hash_table_mask + 1) * sizeof (void *));
@@ -1700,8 +1707,7 @@ dbuf_findbp(dnode_t *dn, int level, uint64_t blkid, int fail_sparse,
 		if (dh == NULL) {
 			err = dbuf_hold_impl(dn, level+1, blkid >> epbs,
 					fail_sparse, NULL, parentp);
-		}
-		else {
+		} else {
 			__dbuf_hold_impl_init(dh + 1, dn, dh->dh_level + 1,
 					blkid >> epbs, fail_sparse, NULL,
 					parentp, dh->dh_depth + 1);
@@ -1927,7 +1933,7 @@ dbuf_prefetch(dnode_t *dn, uint64_t blkid, zio_priority_t prio)
 	}
 }
 
-#define DBUF_HOLD_IMPL_MAX_DEPTH	20
+#define	DBUF_HOLD_IMPL_MAX_DEPTH	20
 
 /*
  * Returns with db_holds incremented, and db_mtx not held.
@@ -1956,7 +1962,8 @@ top:
 					dh->dh_fail_sparse, &dh->dh_parent,
 					&dh->dh_bp, dh);
 		if (dh->dh_fail_sparse) {
-			if (dh->dh_err == 0 && dh->dh_bp && BP_IS_HOLE(dh->dh_bp))
+			if (dh->dh_err == 0 &&
+			    dh->dh_bp && BP_IS_HOLE(dh->dh_bp))
 				dh->dh_err = SET_ERROR(ENOENT);
 			if (dh->dh_err) {
 				if (dh->dh_parent)
@@ -2037,13 +2044,13 @@ dbuf_hold_impl(dnode_t *dn, uint8_t level, uint64_t blkid, int fail_sparse,
 	struct dbuf_hold_impl_data *dh;
 	int error;
 
-	dh = kmem_zalloc(sizeof(struct dbuf_hold_impl_data) *
+	dh = kmem_zalloc(sizeof (struct dbuf_hold_impl_data) *
 	    DBUF_HOLD_IMPL_MAX_DEPTH, KM_PUSHPAGE);
 	__dbuf_hold_impl_init(dh, dn, level, blkid, fail_sparse, tag, dbp, 0);
 
 	error = __dbuf_hold_impl(dh);
 
-	kmem_free(dh, sizeof(struct dbuf_hold_impl_data) *
+	kmem_free(dh, sizeof (struct dbuf_hold_impl_data) *
 	    DBUF_HOLD_IMPL_MAX_DEPTH);
 
 	return (error);
@@ -2359,7 +2366,8 @@ dbuf_check_blkptr(dnode_t *dn, dmu_buf_impl_t *db)
 	}
 }
 
-/* dbuf_sync_indirect() is called recursively from dbuf_sync_list() so it
+/*
+ * dbuf_sync_indirect() is called recursively from dbuf_sync_list() so it
  * is critical the we not allow the compiler to inline this function in to
  * dbuf_sync_list() thereby drastically bloating the stack usage.
  */
@@ -2409,7 +2417,8 @@ dbuf_sync_indirect(dbuf_dirty_record_t *dr, dmu_tx_t *tx)
 	zio_nowait(zio);
 }
 
-/* dbuf_sync_leaf() is called recursively from dbuf_sync_list() so it is
+/*
+ * dbuf_sync_leaf() is called recursively from dbuf_sync_list() so it is
  * critical the we not allow the compiler to inline this function in to
  * dbuf_sync_list() thereby drastically bloating the stack usage.
  */

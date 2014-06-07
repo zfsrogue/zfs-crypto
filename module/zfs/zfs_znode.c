@@ -355,6 +355,7 @@ zfs_znode_alloc(zfs_sb_t *zsb, dmu_buf_t *db, int blksz,
 {
 	znode_t	*zp;
 	struct inode *ip;
+	uint64_t mode;
 	uint64_t parent;
 	sa_bulk_attr_t bulk[9];
 	int count = 0;
@@ -386,7 +387,7 @@ zfs_znode_alloc(zfs_sb_t *zsb, dmu_buf_t *db, int blksz,
 
 	zfs_znode_sa_init(zsb, zp, db, obj_type, hdl);
 
-	SA_ADD_BULK_ATTR(bulk, count, SA_ZPL_MODE(zsb), NULL, &zp->z_mode, 8);
+	SA_ADD_BULK_ATTR(bulk, count, SA_ZPL_MODE(zsb), NULL, &mode, 8);
 	SA_ADD_BULK_ATTR(bulk, count, SA_ZPL_GEN(zsb), NULL, &zp->z_gen, 8);
 	SA_ADD_BULK_ATTR(bulk, count, SA_ZPL_SIZE(zsb), NULL, &zp->z_size, 8);
 	SA_ADD_BULK_ATTR(bulk, count, SA_ZPL_LINKS(zsb), NULL, &zp->z_links, 8);
@@ -405,6 +406,8 @@ zfs_znode_alloc(zfs_sb_t *zsb, dmu_buf_t *db, int blksz,
 
 		goto error;
 	}
+
+	zp->z_mode = mode;
 
 	/*
 	 * xattr znodes hold a reference on their unique parent
@@ -440,7 +443,26 @@ zfs_znode_alloc(zfs_sb_t *zsb, dmu_buf_t *db, int blksz,
 error:
 	unlock_new_inode(ip);
 	iput(ip);
-	return NULL;
+	return (NULL);
+}
+
+void
+zfs_set_inode_flags(znode_t *zp, struct inode *ip)
+{
+	/*
+	 * Linux and Solaris have different sets of file attributes, so we
+	 * restrict this conversion to the intersection of the two.
+	 */
+
+	if (zp->z_pflags & ZFS_IMMUTABLE)
+		ip->i_flags |= S_IMMUTABLE;
+	else
+		ip->i_flags &= ~S_IMMUTABLE;
+
+	if (zp->z_pflags & ZFS_APPENDONLY)
+		ip->i_flags |= S_APPEND;
+	else
+		ip->i_flags &= ~S_APPEND;
 }
 
 /*
@@ -476,6 +498,7 @@ zfs_inode_update(znode_t *zp)
 	ip->i_gid = SGID_TO_KGID(zp->z_gid);
 	set_nlink(ip, zp->z_links);
 	ip->i_mode = zp->z_mode;
+	zfs_set_inode_flags(zp, ip);
 	ip->i_blkbits = SPA_MINBLOCKSHIFT;
 	dmu_object_size_from_db(sa_get_db(zp->z_sa_hdl), &blksize,
 	    (u_longlong_t *)&ip->i_blocks);
@@ -647,7 +670,7 @@ zfs_mknode(znode_t *dzp, vattr_t *vap, dmu_tx_t *tx, cred_t *cr,
 	 * order for  DMU_OT_ZNODE is critical since it needs to be constructed
 	 * in the old znode_phys_t format.  Don't change this ordering
 	 */
-	sa_attrs = kmem_alloc(sizeof(sa_bulk_attr_t) * ZPL_END, KM_PUSHPAGE);
+	sa_attrs = kmem_alloc(sizeof (sa_bulk_attr_t) * ZPL_END, KM_PUSHPAGE);
 
 	if (obj_type == DMU_OT_ZNODE) {
 		SA_ADD_BULK_ATTR(sa_attrs, cnt, SA_ZPL_ATIME(zsb),
@@ -749,7 +772,7 @@ zfs_mknode(znode_t *dzp, vattr_t *vap, dmu_tx_t *tx, cred_t *cr,
 		err = zfs_aclset_common(*zpp, acl_ids->z_aclp, cr, tx);
 		ASSERT0(err);
 	}
-	kmem_free(sa_attrs, sizeof(sa_bulk_attr_t) * ZPL_END);
+	kmem_free(sa_attrs, sizeof (sa_bulk_attr_t) * ZPL_END);
 	ZFS_OBJ_HOLD_EXIT(zsb, obj);
 }
 
@@ -856,19 +879,15 @@ zfs_zget(zfs_sb_t *zsb, uint64_t obj_num, znode_t **zpp)
 	znode_t		*zp;
 	int err;
 	sa_handle_t	*hdl;
-	struct inode	*ip;
 
 	*zpp = NULL;
 
 again:
-	ip = ilookup(zsb->z_sb, obj_num);
-
 	ZFS_OBJ_HOLD_ENTER(zsb, obj_num);
 
 	err = sa_buf_hold(zsb->z_os, obj_num, NULL, &db);
 	if (err) {
 		ZFS_OBJ_HOLD_EXIT(zsb, obj_num);
-		iput(ip);
 		return (err);
 	}
 
@@ -879,27 +898,13 @@ again:
 	    doi.doi_bonus_size < sizeof (znode_phys_t)))) {
 		sa_buf_rele(db, NULL);
 		ZFS_OBJ_HOLD_EXIT(zsb, obj_num);
-		iput(ip);
 		return (SET_ERROR(EINVAL));
 	}
 
 	hdl = dmu_buf_get_user(db);
 	if (hdl != NULL) {
-		if (ip == NULL) {
-			/*
-			 * ilookup returned NULL, which means
-			 * the znode is dying - but the SA handle isn't
-			 * quite dead yet, we need to drop any locks
-			 * we're holding, re-schedule the task and try again.
-			 */
-			sa_buf_rele(db, NULL);
-			ZFS_OBJ_HOLD_EXIT(zsb, obj_num);
-
-			schedule();
-			goto again;
-		}
-
 		zp = sa_get_userdata(hdl);
+
 
 		/*
 		 * Since "SA" does immediate eviction we
@@ -914,18 +919,34 @@ again:
 		if (zp->z_unlinked) {
 			err = SET_ERROR(ENOENT);
 		} else {
-			igrab(ZTOI(zp));
+			/*
+			 * If igrab() returns NULL the VFS has independently
+			 * determined the inode should be evicted and has
+			 * called iput_final() to start the eviction process.
+			 * The SA handle is still valid but because the VFS
+			 * requires that the eviction succeed we must drop
+			 * our locks and references to allow the eviction to
+			 * complete.  The zfs_zget() may then be retried.
+			 *
+			 * This unlikely case could be optimized by registering
+			 * a sops->drop_inode() callback.  The callback would
+			 * need to detect the active SA hold thereby informing
+			 * the VFS that this inode should not be evicted.
+			 */
+			if (igrab(ZTOI(zp)) == NULL) {
+				mutex_exit(&zp->z_lock);
+				sa_buf_rele(db, NULL);
+				ZFS_OBJ_HOLD_EXIT(zsb, obj_num);
+				goto again;
+			}
 			*zpp = zp;
 			err = 0;
 		}
-		sa_buf_rele(db, NULL);
 		mutex_exit(&zp->z_lock);
+		sa_buf_rele(db, NULL);
 		ZFS_OBJ_HOLD_EXIT(zsb, obj_num);
-		iput(ip);
 		return (err);
 	}
-
-	ASSERT3P(ip, ==, NULL);
 
 	/*
 	 * Not found create new znode/vnode but only if file exists.
@@ -1106,25 +1127,89 @@ zfs_zinactive(znode_t *zp)
 		ZFS_OBJ_HOLD_EXIT(zsb, z_id);
 }
 
+static inline int
+zfs_compare_timespec(struct timespec *t1, struct timespec *t2)
+{
+	if (t1->tv_sec < t2->tv_sec)
+		return (-1);
+
+	if (t1->tv_sec > t2->tv_sec)
+		return (1);
+
+	return (t1->tv_nsec - t2->tv_nsec);
+}
+
+/*
+ *  Determine whether the znode's atime must be updated.  The logic mostly
+ *  duplicates the Linux kernel's relatime_need_update() functionality.
+ *  This function is only called if the underlying filesystem actually has
+ *  atime updates enabled.
+ */
+static inline boolean_t
+zfs_atime_need_update(znode_t *zp, timestruc_t *now)
+{
+	if (!ZTOZSB(zp)->z_relatime)
+		return (B_TRUE);
+
+	/*
+	 * In relatime mode, only update the atime if the previous atime
+	 * is earlier than either the ctime or mtime or if at least a day
+	 * has passed since the last update of atime.
+	 */
+	if (zfs_compare_timespec(&ZTOI(zp)->i_mtime, &ZTOI(zp)->i_atime) >= 0)
+		return (B_TRUE);
+
+	if (zfs_compare_timespec(&ZTOI(zp)->i_ctime, &ZTOI(zp)->i_atime) >= 0)
+		return (B_TRUE);
+
+	if ((long)now->tv_sec - ZTOI(zp)->i_atime.tv_sec >= 24*60*60)
+		return (B_TRUE);
+
+	return (B_FALSE);
+}
+
+/*
+ * Prepare to update znode time stamps.
+ *
+ *	IN:	zp	- znode requiring timestamp update
+ *		flag	- ATTR_MTIME, ATTR_CTIME, ATTR_ATIME flags
+ *		have_tx	- true of caller is creating a new txg
+ *
+ *	OUT:	zp	- new atime (via underlying inode's i_atime)
+ *		mtime	- new mtime
+ *		ctime	- new ctime
+ *
+ * NOTE: The arguments are somewhat redundant.  The following condition
+ * is always true:
+ *
+ *		have_tx == !(flag & ATTR_ATIME)
+ */
 void
 zfs_tstamp_update_setup(znode_t *zp, uint_t flag, uint64_t mtime[2],
     uint64_t ctime[2], boolean_t have_tx)
 {
 	timestruc_t	now;
 
+	ASSERT(have_tx == !(flag & ATTR_ATIME));
 	gethrestime(&now);
 
-	if (have_tx) {	/* will sa_bulk_update happen really soon? */
+	/*
+	 * NOTE: The following test intentionally does not update z_atime_dirty
+	 * in the case where an ATIME update has been requested but for which
+	 * the update is omitted due to relatime logic.  The rationale being
+	 * that if the flag was set somewhere else, we should leave it alone
+	 * here.
+	 */
+	if (flag & ATTR_ATIME) {
+		if (zfs_atime_need_update(zp, &now)) {
+			ZFS_TIME_ENCODE(&now, zp->z_atime);
+			ZTOI(zp)->i_atime.tv_sec = zp->z_atime[0];
+			ZTOI(zp)->i_atime.tv_nsec = zp->z_atime[1];
+			zp->z_atime_dirty = 1;
+		}
+	} else {
 		zp->z_atime_dirty = 0;
 		zp->z_seq++;
-	} else {
-		zp->z_atime_dirty = 1;
-	}
-
-	if (flag & ATTR_ATIME) {
-		ZFS_TIME_ENCODE(&now, zp->z_atime);
-		ZTOI(zp)->i_atime.tv_sec = zp->z_atime[0];
-		ZTOI(zp)->i_atime.tv_nsec = zp->z_atime[1];
 	}
 
 	if (flag & ATTR_MTIME) {

@@ -34,6 +34,7 @@
 #include <sys/zap.h>
 #include <sys/zil.h>
 #include <sys/vdev_impl.h>
+#include <sys/vdev_file.h>
 #include <sys/metaslab.h>
 #include <sys/uberblock_impl.h>
 #include <sys/txg.h>
@@ -542,7 +543,7 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 
 	if (spa->spa_label_features == NULL) {
 		VERIFY(nvlist_alloc(&spa->spa_label_features, NV_UNIQUE_NAME,
-		    KM_SLEEP) == 0);
+		    KM_PUSHPAGE) == 0);
 	}
 
 	spa->spa_debug = ((zfs_flags & ZFS_DEBUG_SPA) != 0);
@@ -1552,7 +1553,9 @@ dva_get_dsize_sync(spa_t *spa, const dva_t *dva)
 
 	if (asize != 0 && spa->spa_deflate) {
 		vdev_t *vd = vdev_lookup_top(spa, DVA_GET_VDEV(dva));
-		dsize = (asize >> SPA_MINBLOCKSHIFT) * vd->vdev_deflate_ratio;
+		if (vd != NULL)
+			dsize = (asize >> SPA_MINBLOCKSHIFT) *
+			    vd->vdev_deflate_ratio;
 	}
 
 	return (dsize);
@@ -1653,10 +1656,12 @@ spa_init(int mode)
 	refcount_init();
 	unique_init();
 	space_map_init();
+	ddt_init();
 	zio_init();
 	dmu_init();
 	zil_init();
 	vdev_cache_stat_init();
+	vdev_file_init();
 	zfs_prop_init();
 	zpool_prop_init();
 	zpool_feature_init();
@@ -1671,10 +1676,12 @@ spa_fini(void)
 
 	spa_evict_all();
 
+	vdev_file_fini();
 	vdev_cache_stat_fini();
 	zil_fini();
 	dmu_fini();
 	zio_fini();
+	ddt_fini();
 	space_map_fini();
 	unique_fini();
 	refcount_fini();
@@ -1883,12 +1890,12 @@ EXPORT_SYMBOL(spa_mode);
 EXPORT_SYMBOL(spa_namespace_lock);
 
 module_param(zfs_deadman_synctime_ms, ulong, 0644);
-MODULE_PARM_DESC(zfs_deadman_synctime_ms,"Expiration time in milliseconds");
+MODULE_PARM_DESC(zfs_deadman_synctime_ms, "Expiration time in milliseconds");
 
 module_param(zfs_deadman_enabled, int, 0644);
 MODULE_PARM_DESC(zfs_deadman_enabled, "Enable deadman timer");
 
 module_param(spa_asize_inflation, int, 0644);
 MODULE_PARM_DESC(spa_asize_inflation,
-    "SPA size estimate multiplication factor");
+	"SPA size estimate multiplication factor");
 #endif

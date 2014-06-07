@@ -90,6 +90,7 @@
 #include <string.h>
 #include <strings.h>
 #include <pthread.h>
+#include <synch.h>
 #include <assert.h>
 #include <alloca.h>
 #include <umem.h>
@@ -225,7 +226,7 @@ typedef void (*thread_func_t)(void *);
 typedef void (*thread_func_arg_t)(void *);
 typedef pthread_t kt_did_t;
 
-#define kpreempt(x)	((void)0)
+#define	kpreempt(x)	((void)0)
 
 typedef struct kthread {
 	kt_did_t	t_tid;
@@ -600,6 +601,16 @@ extern vnode_t *rootdir;
 #define	ddi_get_lbolt64()	(gethrtime() >> 23)
 #define	hz	119	/* frequency when using gethrtime() >> 23 for lbolt */
 
+#define	ddi_time_before(a, b)		(a < b)
+#define	ddi_time_after(a, b)		ddi_time_before(b, a)
+#define	ddi_time_before_eq(a, b)	(!ddi_time_after(a, b))
+#define	ddi_time_after_eq(a, b)		ddi_time_before_eq(b, a)
+
+#define	ddi_time_before64(a, b)		(a < b)
+#define	ddi_time_after64(a, b)		ddi_time_before64(b, a)
+#define	ddi_time_before_eq64(a, b)	(!ddi_time_after64(a, b))
+#define	ddi_time_after_eq64(a, b)	ddi_time_before_eq64(b, a)
+
 extern void delay(clock_t ticks);
 
 #define	SEC_TO_TICK(sec)	((sec) * hz)
@@ -727,7 +738,7 @@ void ksiddomain_rele(ksiddomain_t *);
 #define	ddi_log_sysevent(_a, _b, _c, _d, _e, _f, _g) \
 	sysevent_post_event(_c, _d, _b, "libzpool", _e, _f)
 
-#define zfs_sleep_until(wakeup)						\
+#define	zfs_sleep_until(wakeup)						\
 	do {								\
 		hrtime_t delta = wakeup - gethrtime();			\
 		struct timespec ts;					\

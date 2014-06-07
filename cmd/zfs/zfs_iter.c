@@ -320,8 +320,8 @@ zfs_sort(const void *larg, const void *rarg, void *data)
 		} else if (psc->sc_prop == ZFS_PROP_NAME) {
 			lvalid = rvalid = B_TRUE;
 
-			(void) strlcpy(lbuf, zfs_get_name(l), sizeof(lbuf));
-			(void) strlcpy(rbuf, zfs_get_name(r), sizeof(rbuf));
+			(void) strlcpy(lbuf, zfs_get_name(l), sizeof (lbuf));
+			(void) strlcpy(rbuf, zfs_get_name(r), sizeof (rbuf));
 
 			lstr = lbuf;
 			rstr = rbuf;
@@ -335,9 +335,9 @@ zfs_sort(const void *larg, const void *rarg, void *data)
 			rstr = rbuf;
 		} else {
 			lvalid = zfs_prop_valid_for_type(psc->sc_prop,
-			    zfs_get_type(l));
+			    zfs_get_type(l), B_FALSE);
 			rvalid = zfs_prop_valid_for_type(psc->sc_prop,
-			    zfs_get_type(r));
+			    zfs_get_type(r), B_FALSE);
 
 			if (lvalid)
 				(void) zfs_prop_get_numeric(l, psc->sc_prop,

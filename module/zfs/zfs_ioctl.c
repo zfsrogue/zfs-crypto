@@ -194,7 +194,7 @@
 #include "zfs_comutil.h"
 
 kmutex_t zfsdev_state_lock;
-list_t zfsdev_state_list;
+zfsdev_state_t *zfsdev_state_list;
 
 extern void zfs_init(void);
 extern void zfs_fini(void);
@@ -571,7 +571,7 @@ out_check:
 		return (PRIV_POLICY(cr, needed_priv, B_FALSE, EPERM, NULL));
 	return (0);
 #else
-	return ENOTSUP;
+	return (ENOTSUP);
 #endif /* HAVE_MLSLABEL */
 }
 
@@ -3705,11 +3705,13 @@ recursive_unmount(const char *fsname, void *arg)
 {
 	const char *snapname = arg;
 	char *fullname;
+	int error;
 
 	fullname = kmem_asprintf("%s@%s", fsname, snapname);
-	zfs_unmount_snap(fullname);
+	error = zfs_unmount_snap(fullname);
 	strfree(fullname);
-	return (zfs_unmount_snap(fullname));
+
+	return (error);
 }
 
 /*
@@ -5579,11 +5581,11 @@ zfs_ioc_release(const char *pool, nvlist_t *holds, nvlist_t *errlist)
 /*
  * inputs:
  * zc_guid		flags (ZEVENT_NONBLOCK)
+ * zc_cleanup_fd	zevent file descriptor
  *
  * outputs:
  * zc_nvlist_dst	next nvlist event
  * zc_cookie		dropped events since last get
- * zc_cleanup_fd	cleanup-on-exit file descriptor
  */
 static int
 zfs_ioc_events_next(zfs_cmd_t *zc)
@@ -5635,7 +5637,29 @@ zfs_ioc_events_clear(zfs_cmd_t *zc)
 	zfs_zevent_drain_all(&count);
 	zc->zc_cookie = count;
 
-	return 0;
+	return (0);
+}
+
+/*
+ * inputs:
+ * zc_guid		eid | ZEVENT_SEEK_START | ZEVENT_SEEK_END
+ * zc_cleanup		zevent file descriptor
+ */
+static int
+zfs_ioc_events_seek(zfs_cmd_t *zc)
+{
+	zfs_zevent_t *ze;
+	minor_t minor;
+	int error;
+
+	error = zfs_zevent_fd_hold(zc->zc_cleanup_fd, &minor, &ze);
+	if (error != 0)
+		return (error);
+
+	error = zfs_zevent_seek(ze, zc->zc_guid);
+	zfs_zevent_fd_rele(zc->zc_cleanup_fd);
+
+	return (error);
 }
 
 /*
@@ -6112,6 +6136,8 @@ zfs_ioctl_init(void)
 	    zfs_secpolicy_config, NO_NAME, B_FALSE, POOL_CHECK_NONE);
 	zfs_ioctl_register_legacy(ZFS_IOC_EVENTS_CLEAR, zfs_ioc_events_clear,
 	    zfs_secpolicy_config, NO_NAME, B_FALSE, POOL_CHECK_NONE);
+	zfs_ioctl_register_legacy(ZFS_IOC_EVENTS_SEEK, zfs_ioc_events_seek,
+	    zfs_secpolicy_config, NO_NAME, B_FALSE, POOL_CHECK_NONE);
 
     /*
      * Encryption functions
@@ -6157,20 +6183,21 @@ zfsdev_get_state_impl(minor_t minor, enum zfsdev_state_type which)
 {
 	zfsdev_state_t *zs;
 
-	ASSERT(MUTEX_HELD(&zfsdev_state_lock));
-
-	for (zs = list_head(&zfsdev_state_list); zs != NULL;
-	     zs = list_next(&zfsdev_state_list, zs)) {
+	for (zs = zfsdev_state_list; zs != NULL; zs = zs->zs_next) {
 		if (zs->zs_minor == minor) {
+			smp_rmb();
 			switch (which) {
-				case ZST_ONEXIT:  return (zs->zs_onexit);
-				case ZST_ZEVENT:  return (zs->zs_zevent);
-				case ZST_ALL:     return (zs);
+			case ZST_ONEXIT:
+				return (zs->zs_onexit);
+			case ZST_ZEVENT:
+				return (zs->zs_zevent);
+			case ZST_ALL:
+				return (zs);
 			}
 		}
 	}
 
-	return NULL;
+	return (NULL);
 }
 
 void *
@@ -6178,11 +6205,9 @@ zfsdev_get_state(minor_t minor, enum zfsdev_state_type which)
 {
 	void *ptr;
 
-	mutex_enter(&zfsdev_state_lock);
 	ptr = zfsdev_get_state_impl(minor, which);
-	mutex_exit(&zfsdev_state_lock);
 
-	return ptr;
+	return (ptr);
 }
 
 minor_t
@@ -6221,25 +6246,50 @@ zfsdev_minor_alloc(void)
 static int
 zfsdev_state_init(struct file *filp)
 {
-	zfsdev_state_t *zs;
+	zfsdev_state_t *zs, *zsprev = NULL;
 	minor_t minor;
+	boolean_t newzs = B_FALSE;
 
 	ASSERT(MUTEX_HELD(&zfsdev_state_lock));
 
-        minor = zfsdev_minor_alloc();
-        if (minor == 0)
-                return (SET_ERROR(ENXIO));
+	minor = zfsdev_minor_alloc();
+	if (minor == 0)
+		return (SET_ERROR(ENXIO));
 
-	zs = kmem_zalloc( sizeof(zfsdev_state_t), KM_SLEEP);
+	for (zs = zfsdev_state_list; zs != NULL; zs = zs->zs_next) {
+		if (zs->zs_minor == -1)
+			break;
+		zsprev = zs;
+	}
+
+	if (!zs) {
+		zs = kmem_zalloc(sizeof (zfsdev_state_t), KM_SLEEP);
+		newzs = B_TRUE;
+	}
 
 	zs->zs_file = filp;
-	zs->zs_minor = minor;
 	filp->private_data = zs;
 
 	zfs_onexit_init((zfs_onexit_t **)&zs->zs_onexit);
 	zfs_zevent_init((zfs_zevent_t **)&zs->zs_zevent);
 
-	list_insert_tail(&zfsdev_state_list, zs);
+
+	/*
+	 * In order to provide for lock-free concurrent read access
+	 * to the minor list in zfsdev_get_state_impl(), new entries
+	 * must be completely written before linking them into the
+	 * list whereas existing entries are already linked; the last
+	 * operation must be updating zs_minor (from -1 to the new
+	 * value).
+	 */
+	if (newzs) {
+		zs->zs_minor = minor;
+		smp_wmb();
+		zsprev->zs_next = zs;
+	} else {
+		smp_wmb();
+		zs->zs_minor = minor;
+	}
 
 	return (0);
 }
@@ -6253,13 +6303,11 @@ zfsdev_state_destroy(struct file *filp)
 	ASSERT(filp->private_data != NULL);
 
 	zs = filp->private_data;
+	zs->zs_minor = -1;
 	zfs_onexit_destroy(zs->zs_onexit);
 	zfs_zevent_destroy(zs->zs_zevent);
 
-	list_remove(&zfsdev_state_list, zs);
-	kmem_free(zs, sizeof(zfsdev_state_t));
-
-	return 0;
+	return (0);
 }
 
 static int
@@ -6291,9 +6339,9 @@ zfsdev_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 {
 	zfs_cmd_t *zc;
 	uint_t vecnum;
-	int error, rc, len, flag = 0;
+	int error, rc, flag = 0;
 	const zfs_ioc_vec_t *vec;
-	char *saved_poolname;
+	char *saved_poolname = NULL;
 	nvlist_t *innvl = NULL;
 
 	vecnum = cmd - ZFS_IOC_FIRST;
@@ -6309,7 +6357,6 @@ zfsdev_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 		return (-SET_ERROR(EINVAL));
 
 	zc = kmem_zalloc(sizeof (zfs_cmd_t), KM_SLEEP | KM_NODEBUG);
-	saved_poolname = kmem_alloc(MAXNAMELEN, KM_SLEEP);
 
 	error = ddi_copyin((void *)arg, zc, sizeof (zfs_cmd_t), flag);
 	if (error != 0) {
@@ -6359,9 +6406,13 @@ zfsdev_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 		goto out;
 
 	/* legacy ioctls can modify zc_name */
-	(void) strlcpy(saved_poolname, zc->zc_name, sizeof(saved_poolname));
-	len = strcspn(saved_poolname, "/@") + 1;
-	saved_poolname[len] = '\0';
+	saved_poolname = strdup(zc->zc_name);
+	if (saved_poolname == NULL) {
+		error = SET_ERROR(ENOMEM);
+		goto out;
+	} else {
+		saved_poolname[strcspn(saved_poolname, "/@#")] = '\0';
+	}
 
 	if (vec->zvec_func != NULL) {
 		nvlist_t *outnvl;
@@ -6426,10 +6477,12 @@ out:
 		char *s = tsd_get(zfs_allow_log_key);
 		if (s != NULL)
 			strfree(s);
-		(void) tsd_set(zfs_allow_log_key, strdup(saved_poolname));
+		(void) tsd_set(zfs_allow_log_key, saved_poolname);
+	} else {
+		if (saved_poolname != NULL)
+			strfree(saved_poolname);
 	}
 
-	kmem_free(saved_poolname, MAXNAMELEN);
 	kmem_free(zc, sizeof (zfs_cmd_t));
 	return (-error);
 }
@@ -6438,24 +6491,24 @@ out:
 static long
 zfsdev_compat_ioctl(struct file *filp, unsigned cmd, unsigned long arg)
 {
-        return zfsdev_ioctl(filp, cmd, arg);
+	return (zfsdev_ioctl(filp, cmd, arg));
 }
 #else
-#define zfsdev_compat_ioctl   NULL
+#define	zfsdev_compat_ioctl	NULL
 #endif
 
 static const struct file_operations zfsdev_fops = {
-	.open            = zfsdev_open,
-	.release         = zfsdev_release,
-	.unlocked_ioctl  = zfsdev_ioctl,
-	.compat_ioctl    = zfsdev_compat_ioctl,
-	.owner           = THIS_MODULE,
+	.open		= zfsdev_open,
+	.release	= zfsdev_release,
+	.unlocked_ioctl	= zfsdev_ioctl,
+	.compat_ioctl	= zfsdev_compat_ioctl,
+	.owner		= THIS_MODULE,
 };
 
 static struct miscdevice zfs_misc = {
-	.minor          = MISC_DYNAMIC_MINOR,
-	.name           = ZFS_DRIVER,
-	.fops           = &zfsdev_fops,
+	.minor		= MISC_DYNAMIC_MINOR,
+	.name		= ZFS_DRIVER,
+	.fops		= &zfsdev_fops,
 };
 
 static int
@@ -6464,11 +6517,11 @@ zfs_attach(void)
 	int error;
 
 	mutex_init(&zfsdev_state_lock, NULL, MUTEX_DEFAULT, NULL);
-	list_create(&zfsdev_state_list, sizeof (zfsdev_state_t),
-	    offsetof(zfsdev_state_t, zs_next));
+	zfsdev_state_list = kmem_zalloc(sizeof (zfsdev_state_t), KM_SLEEP);
+	zfsdev_state_list->zs_minor = -1;
 
 	error = misc_register(&zfs_misc);
-        if (error != 0) {
+	if (error != 0) {
 		printk(KERN_INFO "ZFS: misc_register() failed %d\n", error);
 		return (error);
 	}
@@ -6480,13 +6533,21 @@ static void
 zfs_detach(void)
 {
 	int error;
+	zfsdev_state_t *zs, *zsprev = NULL;
 
 	error = misc_deregister(&zfs_misc);
 	if (error != 0)
 		printk(KERN_INFO "ZFS: misc_deregister() failed %d\n", error);
 
 	mutex_destroy(&zfsdev_state_lock);
-	list_destroy(&zfsdev_state_list);
+
+	for (zs = zfsdev_state_list; zs != NULL; zs = zs->zs_next) {
+		if (zsprev)
+			kmem_free(zsprev, sizeof (zfsdev_state_t));
+		zsprev = zs;
+	}
+	if (zsprev)
+		kmem_free(zsprev, sizeof (zfsdev_state_t));
 }
 
 static void
@@ -6497,9 +6558,9 @@ zfs_allow_log_destroy(void *arg)
 }
 
 #ifdef DEBUG
-#define ZFS_DEBUG_STR	" (DEBUG mode)"
+#define	ZFS_DEBUG_STR	" (DEBUG mode)"
 #else
-#define ZFS_DEBUG_STR	""
+#define	ZFS_DEBUG_STR	""
 #endif
 
 int
@@ -6523,9 +6584,9 @@ _init(void)
 	tsd_create(&zfs_allow_log_key, zfs_allow_log_destroy);
 
 	printk(KERN_NOTICE "ZFS: Loaded module v%s-%s%s, "
-	       "ZFS pool version %s, ZFS filesystem version %s\n",
-	       ZFS_META_VERSION, ZFS_META_RELEASE, ZFS_DEBUG_STR,
-	       SPA_VERSION_STRING, ZPL_VERSION_STRING);
+	    "ZFS pool version %s, ZFS filesystem version %s\n",
+	    ZFS_META_VERSION, ZFS_META_RELEASE, ZFS_DEBUG_STR,
+	    SPA_VERSION_STRING, ZPL_VERSION_STRING);
 #ifndef CONFIG_FS_POSIX_ACL
 	printk(KERN_NOTICE "ZFS: Posix ACLs disabled by kernel\n");
 #endif /* CONFIG_FS_POSIX_ACL */
@@ -6538,8 +6599,8 @@ out1:
 	zfs_fini();
 	spa_fini();
 	printk(KERN_NOTICE "ZFS: Failed to Load ZFS Filesystem v%s-%s%s"
-	       ", rc = %d\n", ZFS_META_VERSION, ZFS_META_RELEASE,
-	       ZFS_DEBUG_STR, error);
+	    ", rc = %d\n", ZFS_META_VERSION, ZFS_META_RELEASE,
+	    ZFS_DEBUG_STR, error);
 
 	return (error);
 }
@@ -6557,7 +6618,7 @@ _fini(void)
 	tsd_destroy(&zfs_allow_log_key);
 
 	printk(KERN_NOTICE "ZFS: Unloaded module v%s-%s%s\n",
-	       ZFS_META_VERSION, ZFS_META_RELEASE, ZFS_DEBUG_STR);
+	    ZFS_META_VERSION, ZFS_META_RELEASE, ZFS_DEBUG_STR);
 
 	return (0);
 }

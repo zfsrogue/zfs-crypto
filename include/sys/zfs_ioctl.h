@@ -263,8 +263,12 @@ typedef struct zinject_record {
 #define	ZINJECT_FLUSH_ARC	0x2
 #define	ZINJECT_UNLOAD_SPA	0x4
 
+#define	ZEVENT_NONE		0x0
 #define	ZEVENT_NONBLOCK		0x1
 #define	ZEVENT_SIZE		1024
+
+#define	ZEVENT_SEEK_START	0
+#define	ZEVENT_SEEK_END		UINT64_MAX
 
 typedef enum zinject_type {
 	ZINJECT_UNINITIALIZED,
@@ -372,8 +376,15 @@ enum zfsdev_state_type {
 	ZST_ALL,
 };
 
+/*
+ * The zfsdev_state_t structure is managed as a singly-linked list
+ * from which items are never deleted.  This allows for lock-free
+ * reading of the list so long as assignments to the zs_next and
+ * reads from zs_minor are performed atomically.  Empty items are
+ * indicated by storing -1 into zs_minor.
+ */
 typedef struct zfsdev_state {
-        list_node_t             zs_next;        /* next zfsdev_state_t link */
+	struct zfsdev_state	*zs_next;	/* next zfsdev_state_t link */
 	struct file		*zs_file;	/* associated file struct */
 	minor_t			zs_minor;	/* made up minor number */
 	void			*zs_onexit;	/* onexit data */

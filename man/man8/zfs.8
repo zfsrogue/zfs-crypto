@@ -762,7 +762,7 @@ the \fBxattr=sa\fR property.  See the \fBxattr\fR property for more details.
 .ad
 .sp .6
 .RS 4n
-Controls whether the access time for files is updated when they are read. Turning this property off avoids producing write traffic when reading files and can result in significant performance gains, though it might confuse mailers and other similar utilities. The default value is \fBon\fR.
+Controls whether the access time for files is updated when they are read. Turning this property off avoids producing write traffic when reading files and can result in significant performance gains, though it might confuse mailers and other similar utilities. The default value is \fBon\fR.  See also \fBrelatime\fR below.
 .RE
 
 .sp
@@ -1053,6 +1053,17 @@ This property can also be referred to by its shortened column name, \fBrefreserv
 .ne 2
 .mk
 .na
+\fB\fBrelatime\fR=\fBon\fR | \fBoff\fR\fR
+.ad
+.sp .6
+.RS 4n
+Controls the manner in which the access time is updated when \fBatime=on\fR is set.  Turning this property \fBon\fR causes the access time to be updated relative to the modify or change time.  Access time is only updated if the previous access time was earlier than the current modify or change time or if the existing access time hasn't been updated within the past 24 hours.  The default value is \fBoff\fR.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
 \fB\fBreservation\fR=\fIsize\fR | \fBnone\fR\fR
 .ad
 .sp .6
@@ -1146,7 +1157,15 @@ smbmount //127.0.0.1/share_tmp /mnt/tmp -o user=workgroup/turbo,password=obrut,u
 .ad
 .sp .6
 .RS 4n
-Controls whether the file system is shared via \fBNFS\fR, and what options are used. A file system with a \fBsharenfs\fR property of \fBoff\fR is managed through traditional tools such as \fBshare\fR(1M), \fBunshare\fR(1M), and \fBdfstab\fR(4). Otherwise, the file system is automatically shared and unshared with the \fBzfs share\fR and \fBzfs unshare\fR commands. If the property is set to \fBon\fR, the \fBshare\fR(1M) command is invoked with no options. Otherwise, the \fBshare\fR(1M) command is invoked with options equivalent to the contents of this property.
+Controls whether the file system is shared via \fBNFS\fR, and what options are used. A file system with a \fBsharenfs\fR property of \fBoff\fR is managed with the \fBexportfs\fR(8) command and entries in \fB/etc/exports\fR file. Otherwise, the file system is automatically shared and unshared with the \fBzfs share\fR and \fBzfs unshare\fR commands. If the property is set to \fBon\fR, the dataset is shared using the \fBexportfs\fR(8) command in the following manner (see \fBexportfs\fR(8) for the meaning of the different options):
+.sp
+.in +4
+.nf
+/usr/sbin/exportfs -i -o sec=sys,rw,no_subtree_check,no_root_squash,mountpoint *:<mountpoint of dataset>
+.fi
+.in -4
+.sp
+Otherwise, the \fBexportfs\fR(8) command is invoked with options equivalent to the contents of this property.
 .sp
 When the \fBsharenfs\fR property is changed for a dataset, the dataset and any children inheriting the property are re-shared with the new options, only if the property was previously \fBoff\fR, or if they were shared before the property was changed. If the new property is \fBoff\fR, the file systems are unshared.
 .RE
@@ -1351,6 +1370,52 @@ For more information, see \fBzfs_encrypt\fR(1).
 .sp
 .LP
 The \fBcasesensitivity\fR, \fBnormalization\fR, and \fButf8only\fR properties are also new permissions that can be assigned to non-privileged users by using the \fBZFS\fR delegated administration feature.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBcontext\fR=\fBSELinux_User:SElinux_Role:Selinux_Type:Sensitivity_Level\fR\fR
+.ad
+.sp .6
+.RS 4n
+This flag sets the SELinux context for all files in the filesytem under the mountpoint for that filesystem.  See \fBselinux\fR(8) for more information.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBfscontext\fR=\fBSELinux_User:SElinux_Role:Selinux_Type:Sensitivity_Level\fR\fR
+.ad
+.sp .6
+.RS 4n
+This flag sets the SELinux context for the filesytem being mounted.  See \fBselinux\fR(8) for more information.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBdefntext\fR=\fBSELinux_User:SElinux_Role:Selinux_Type:Sensitivity_Level\fR\fR
+.ad
+.sp .6
+.RS 4n
+This flag sets the SELinux context for unlabeled files.  See \fBselinux\fR(8) for more information.
+.RE
+
+.sp
+.ne 2
+.mk
+.na
+\fB\fBrootcontext\fR=\fBSELinux_User:SElinux_Role:Selinux_Type:Sensitivity_Level\fR\fR
+.ad
+.sp .6
+.RS 4n
+This flag sets the SELinux context for the root inode of the filesystem.  See \fBselinux\fR(8) for more information.
+.RE
+
 .SS "Temporary Mount Point Properties"
 .LP
 When a file system is mounted, either through \fBmount\fR(8) for legacy mounts or the \fBzfs mount\fR command for normal file systems, its mount options are set according to its properties. The correlation between properties and mount options is as follows:
@@ -3217,6 +3282,7 @@ pool/home/bob  usedbyrefreservation  0                      -
 pool/home/bob  logbias               latency                default
 pool/home/bob  dedup                 off                    default
 pool/home/bob  mlslabel              none                   default
+pool/home/bob  relatime              off                    default
 .fi
 .in -2
 .sp

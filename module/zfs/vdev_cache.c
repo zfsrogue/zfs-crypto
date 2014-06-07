@@ -123,9 +123,9 @@ vdev_cache_lastused_compare(const void *a1, const void *a2)
 	const vdev_cache_entry_t *ve1 = a1;
 	const vdev_cache_entry_t *ve2 = a2;
 
-	if (ve1->ve_lastused < ve2->ve_lastused)
+	if (ddi_time_before(ve1->ve_lastused, ve2->ve_lastused))
 		return (-1);
-	if (ve1->ve_lastused > ve2->ve_lastused)
+	if (ddi_time_after(ve1->ve_lastused, ve2->ve_lastused))
 		return (1);
 
 	/*
@@ -256,8 +256,8 @@ vdev_cache_read(zio_t *zio)
 	vdev_cache_t *vc = &zio->io_vd->vdev_cache;
 	vdev_cache_entry_t *ve, *ve_search;
 	uint64_t cache_offset = P2ALIGN(zio->io_offset, VCBS);
-	ASSERTV(uint64_t cache_phase = P2PHASE(zio->io_offset, VCBS);)
 	zio_t *fio;
+	ASSERTV(uint64_t cache_phase = P2PHASE(zio->io_offset, VCBS));
 
 	ASSERT(zio->io_type == ZIO_TYPE_READ);
 
@@ -277,10 +277,10 @@ vdev_cache_read(zio_t *zio)
 
 	mutex_enter(&vc->vc_lock);
 
-	ve_search = kmem_alloc(sizeof(vdev_cache_entry_t), KM_PUSHPAGE);
+	ve_search = kmem_alloc(sizeof (vdev_cache_entry_t), KM_PUSHPAGE);
 	ve_search->ve_offset = cache_offset;
 	ve = avl_find(&vc->vc_offset_tree, ve_search, NULL);
-	kmem_free(ve_search, sizeof(vdev_cache_entry_t));
+	kmem_free(ve_search, sizeof (vdev_cache_entry_t));
 
 	if (ve != NULL) {
 		if (ve->ve_missed_update) {

@@ -286,6 +286,8 @@ zfs_prop_init(void)
 	/* inherit index (boolean) properties */
 	zprop_register_index(ZFS_PROP_ATIME, "atime", 1, PROP_INHERIT,
 	    ZFS_TYPE_FILESYSTEM, "on | off", "ATIME", boolean_table);
+	zprop_register_index(ZFS_PROP_RELATIME, "relatime", 0, PROP_INHERIT,
+	    ZFS_TYPE_FILESYSTEM, "on | off", "RELATIME", boolean_table);
 	zprop_register_index(ZFS_PROP_DEVICES, "devices", 1, PROP_INHERIT,
 	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_SNAPSHOT, "on | off", "DEVICES",
 	    boolean_table);
@@ -369,6 +371,18 @@ zfs_prop_init(void)
 	    "raw | hex | passphrase,"
 	    "prompt | file://<path> | NO pkcs11: | https://<path>",
 	    "KEYSOURCE");
+	zprop_register_string(ZFS_PROP_SELINUX_CONTEXT, "context",
+	    "none", PROP_DEFAULT, ZFS_TYPE_DATASET, "<selinux context>",
+	    "CONTEXT");
+	zprop_register_string(ZFS_PROP_SELINUX_FSCONTEXT, "fscontext",
+	    "none", PROP_DEFAULT, ZFS_TYPE_DATASET, "<selinux fscontext>",
+	    "FSCONTEXT");
+	zprop_register_string(ZFS_PROP_SELINUX_DEFCONTEXT, "defcontext",
+	    "none", PROP_DEFAULT, ZFS_TYPE_DATASET, "<selinux defcontext>",
+	    "DEFCONTEXT");
+	zprop_register_string(ZFS_PROP_SELINUX_ROOTCONTEXT, "rootcontext",
+	    "none", PROP_DEFAULT, ZFS_TYPE_DATASET, "<selinux rootcontext>",
+	    "ROOTCONTEXT");
 
 	/* readonly number properties */
 	zprop_register_number(ZFS_PROP_USED, "used", 0, PROP_READONLY,
@@ -414,7 +428,7 @@ zfs_prop_init(void)
 	    PROP_DEFAULT, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
 	    "<size> | none", "RESERV");
 	zprop_register_number(ZFS_PROP_VOLSIZE, "volsize", 0, PROP_DEFAULT,
-	    ZFS_TYPE_VOLUME, "<size>", "VOLSIZE");
+	    ZFS_TYPE_SNAPSHOT | ZFS_TYPE_VOLUME, "<size>", "VOLSIZE");
 	zprop_register_number(ZFS_PROP_REFQUOTA, "refquota", 0, PROP_DEFAULT,
 	    ZFS_TYPE_FILESYSTEM, "<size> | none", "REFQUOTA");
 	zprop_register_number(ZFS_PROP_REFRESERVATION, "refreservation", 0,
@@ -585,9 +599,9 @@ zfs_prop_random_value(zfs_prop_t prop, uint64_t seed)
  * Returns TRUE if the property applies to any of the given dataset types.
  */
 boolean_t
-zfs_prop_valid_for_type(int prop, zfs_type_t types)
+zfs_prop_valid_for_type(int prop, zfs_type_t types, boolean_t headcheck)
 {
-	return (zprop_valid_for_type(prop, types));
+	return (zprop_valid_for_type(prop, types, headcheck));
 }
 
 zprop_type_t

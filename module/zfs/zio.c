@@ -131,11 +131,11 @@ zio_init(void)
 	vmem_t *data_alloc_arena = NULL;
 
 	zio_cache = kmem_cache_create("zio_cache", sizeof (zio_t), 0,
-	    zio_cons, zio_dest, NULL, NULL, NULL, KMC_KMEM);
+	    zio_cons, zio_dest, NULL, NULL, NULL, 0);
 	zio_link_cache = kmem_cache_create("zio_link_cache",
-	    sizeof (zio_link_t), 0, NULL, NULL, NULL, NULL, NULL, KMC_KMEM);
-	zio_vdev_cache = kmem_cache_create("zio_vdev_cache", sizeof(vdev_io_t),
-	    PAGESIZE, NULL, NULL, NULL, NULL, NULL, KMC_VMEM);
+	    sizeof (zio_link_t), 0, NULL, NULL, NULL, NULL, NULL, 0);
+	zio_vdev_cache = kmem_cache_create("zio_vdev_cache", sizeof (vdev_io_t),
+	    PAGESIZE, NULL, NULL, NULL, NULL, NULL, 0);
 
 	/*
 	 * For small buffers, we want a cache for each multiple of
@@ -172,17 +172,6 @@ zio_init(void)
 		if (align != 0) {
 			char name[36];
 			int flags = zio_bulk_flags;
-
-			/*
-			 * The smallest buffers (512b) are heavily used and
-			 * experience a lot of churn.  The slabs allocated
-			 * for them are also relatively small (32K).  Thus
-			 * in over to avoid expensive calls to vmalloc() we
-			 * make an exception to the usual slab allocation
-			 * policy and force these buffers to be kmem backed.
-			 */
-			if (size == (1 << SPA_MINBLOCKSHIFT))
-				flags |= KMC_KMEM;
 
 			(void) sprintf(name, "zio_buf_%lu", (ulong_t)size);
 			zio_buf_cache[c] = kmem_cache_create(name, size,
@@ -2040,11 +2029,11 @@ static void
 zio_write_gang_member_ready(zio_t *zio)
 {
 	zio_t *pio = zio_unique_parent(zio);
-	ASSERTV(zio_t *gio = zio->io_gang_leader;)
 	dva_t *cdva = zio->io_bp->blk_dva;
 	dva_t *pdva = pio->io_bp->blk_dva;
 	uint64_t asize;
 	int d;
+	ASSERTV(zio_t *gio = zio->io_gang_leader);
 
 	if (BP_IS_HOLE(zio->io_bp))
 		return;
@@ -3199,15 +3188,18 @@ zio_done(zio_t *zio)
 	if (zio->io_bp != NULL) {
 		ASSERT(zio->io_bp->blk_pad[0] == 0);
 		ASSERT(zio->io_bp->blk_pad[1] == 0);
-		ASSERT(bcmp(zio->io_bp, &zio->io_bp_copy, sizeof (blkptr_t)) == 0 ||
+		ASSERT(bcmp(zio->io_bp, &zio->io_bp_copy,
+		    sizeof (blkptr_t)) == 0 ||
 		    (zio->io_bp == zio_unique_parent(zio)->io_bp));
 		if (zio->io_type == ZIO_TYPE_WRITE && !BP_IS_HOLE(zio->io_bp) &&
 		    zio->io_bp_override == NULL &&
 		    !(zio->io_flags & ZIO_FLAG_IO_REPAIR)) {
 			ASSERT(!BP_SHOULD_BYTESWAP(zio->io_bp));
-			ASSERT3U(zio->io_prop.zp_copies, <=, BP_GET_NDVAS(zio->io_bp));
+			ASSERT3U(zio->io_prop.zp_copies, <=,
+			    BP_GET_NDVAS(zio->io_bp));
 			ASSERT(BP_COUNT_GANG(zio->io_bp) == 0 ||
-			    (BP_COUNT_GANG(zio->io_bp) == BP_GET_NDVAS(zio->io_bp)));
+			    (BP_COUNT_GANG(zio->io_bp) ==
+			    BP_GET_NDVAS(zio->io_bp)));
 		}
 		if (zio->io_flags & ZIO_FLAG_NOPWRITE)
 			VERIFY(BP_EQUAL(zio->io_bp, &zio->io_bp_orig));
@@ -3234,7 +3226,7 @@ zio_done(zio_t *zio)
 			if (asize != zio->io_size) {
 				abuf = zio_buf_alloc(asize);
 				bcopy(zio->io_data, abuf, zio->io_size);
-				bzero(abuf + zio->io_size, asize - zio->io_size);
+				bzero(abuf+zio->io_size, asize-zio->io_size);
 			}
 
 			zio->io_cksum_report = zcr->zcr_next;
@@ -3259,7 +3251,7 @@ zio_done(zio_t *zio)
 	if (zio->io_delay >= MSEC_TO_TICK(zio_delay_max)) {
 		if (zio->io_vd != NULL && !vdev_is_dead(zio->io_vd))
 			zfs_ereport_post(FM_EREPORT_ZFS_DELAY, zio->io_spa,
-                                         zio->io_vd, zio, 0, 0);
+			    zio->io_vd, zio, 0, 0);
 	}
 
 	if (zio->io_error) {
@@ -3282,8 +3274,8 @@ zio_done(zio_t *zio)
 			 * error and generate a logical data ereport.
 			 */
 			spa_log_error(zio->io_spa, zio);
-			zfs_ereport_post(FM_EREPORT_ZFS_DATA, zio->io_spa, NULL, zio,
-			    0, 0);
+			zfs_ereport_post(FM_EREPORT_ZFS_DATA, zio->io_spa,
+			    NULL, zio, 0, 0);
 		}
 	}
 
@@ -3559,13 +3551,13 @@ MODULE_PARM_DESC(zio_requeue_io_start_cut_in_line, "Prioritize requeued I/O");
 
 module_param(zfs_sync_pass_deferred_free, int, 0644);
 MODULE_PARM_DESC(zfs_sync_pass_deferred_free,
-    "defer frees starting in this pass");
+	"Defer frees starting in this pass");
 
 module_param(zfs_sync_pass_dont_compress, int, 0644);
 MODULE_PARM_DESC(zfs_sync_pass_dont_compress,
-    "don't compress starting in this pass");
+	"Don't compress starting in this pass");
 
 module_param(zfs_sync_pass_rewrite, int, 0644);
 MODULE_PARM_DESC(zfs_sync_pass_rewrite,
-    "rewrite new bps starting in this pass");
+	"Rewrite new bps starting in this pass");
 #endif
