@@ -49,6 +49,7 @@
 #include <sys/dsl_deadlist.h>
 #include <sys/dsl_destroy.h>
 #include <sys/dsl_userhold.h>
+#include <sys/dsl_bookmark.h>
 
 #define	SWITCH64(x, y) \
 	{ \
@@ -123,7 +124,9 @@ int
 dsl_dataset_block_kill(dsl_dataset_t *ds, const blkptr_t *bp, dmu_tx_t *tx,
     boolean_t async)
 {
-	int used, compressed, uncompressed;
+	int used = bp_get_dsize_sync(tx->tx_pool->dp_spa, bp);
+	int compressed = BP_GET_PSIZE(bp);
+	int uncompressed = BP_GET_UCSIZE(bp);
 
 	if (BP_IS_HOLE(bp))
 		return (0);
@@ -131,11 +134,6 @@ dsl_dataset_block_kill(dsl_dataset_t *ds, const blkptr_t *bp, dmu_tx_t *tx,
 	ASSERT(dmu_tx_is_syncing(tx));
 	ASSERT(bp->blk_birth <= tx->tx_txg);
 
-	used = bp_get_dsize_sync(tx->tx_pool->dp_spa, bp);
-	compressed = BP_GET_PSIZE(bp);
-	uncompressed = BP_GET_UCSIZE(bp);
-
-	ASSERT(used > 0);
 	if (ds == NULL) {
 		dsl_free(tx->tx_pool, tx->tx_txg, bp);
 		dsl_pool_mos_diduse_space(tx->tx_pool,
@@ -233,7 +231,8 @@ boolean_t
 dsl_dataset_block_freeable(dsl_dataset_t *ds, const blkptr_t *bp,
     uint64_t blk_birth)
 {
-	if (blk_birth <= dsl_dataset_prev_snap_txg(ds))
+	if (blk_birth <= dsl_dataset_prev_snap_txg(ds) ||
+	    (bp != NULL && BP_IS_HOLE(bp)))
 		return (B_FALSE);
 
 	ddt_prefetch(dsl_dataset_get_spa(ds), bp);
@@ -358,7 +357,7 @@ dsl_dataset_hold_obj(dsl_pool_t *dp, uint64_t dsobj, void *tag,
 
 	/* Make sure dsobj has the correct object type. */
 	dmu_object_info_from_db(dbuf, &doi);
-	if (doi.doi_type != DMU_OT_DSL_DATASET) {
+	if (doi.doi_bonus_type != DMU_OT_DSL_DATASET) {
 		dmu_buf_rele(dbuf, tag);
 		return (SET_ERROR(EINVAL));
 	}
@@ -406,6 +405,14 @@ dsl_dataset_hold_obj(dsl_pool_t *dp, uint64_t dsobj, void *tag,
 				err = dsl_dataset_hold_obj(dp,
 				    ds->ds_phys->ds_prev_snap_obj,
 				    ds, &ds->ds_prev);
+			}
+			if (doi.doi_type == DMU_OTN_ZAP_METADATA) {
+				int zaperr = zap_lookup(mos, ds->ds_object,
+				    DS_FIELD_BOOKMARK_NAMES,
+				    sizeof (ds->ds_bookmarks), 1,
+				    &ds->ds_bookmarks);
+				if (zaperr != ENOENT)
+					VERIFY0(zaperr);
 			}
 		} else {
 			if (zfs_flags & ZFS_DEBUG_SNAPNAMES)
@@ -1546,7 +1553,7 @@ dsl_dataset_space(dsl_dataset_t *ds,
 		else
 			*availbytesp = 0;
 	}
-	*usedobjsp = ds->ds_phys->ds_bp.blk_fill;
+	*usedobjsp = BP_GET_FILL(&ds->ds_phys->ds_bp);
 	*availobjsp = DN_MAX_OBJECT - *usedobjsp;
 }
 
@@ -1640,9 +1647,6 @@ static int
 dsl_dataset_rename_snapshot_sync_impl(dsl_pool_t *dp,
     dsl_dataset_t *hds, void *arg)
 {
-#ifdef _KERNEL
-	char *oldname, *newname;
-#endif
 	dsl_dataset_rename_snapshot_arg_t *ddrsa = arg;
 	dsl_dataset_t *ds;
 	uint64_t val;
@@ -1668,18 +1672,6 @@ dsl_dataset_rename_snapshot_sync_impl(dsl_pool_t *dp,
 	mutex_exit(&ds->ds_lock);
 	VERIFY0(zap_add(dp->dp_meta_objset, hds->ds_phys->ds_snapnames_zapobj,
 	    ds->ds_snapname, 8, 1, &ds->ds_object, tx));
-
-#ifdef _KERNEL
-	oldname = kmem_alloc(MAXPATHLEN, KM_PUSHPAGE);
-	newname = kmem_alloc(MAXPATHLEN, KM_PUSHPAGE);
-	snprintf(oldname, MAXPATHLEN, "%s@%s", ddrsa->ddrsa_fsname,
-	    ddrsa->ddrsa_oldsnapname);
-	snprintf(newname, MAXPATHLEN, "%s@%s", ddrsa->ddrsa_fsname,
-	    ddrsa->ddrsa_newsnapname);
-	zvol_rename_minors(oldname, newname);
-	kmem_free(newname, MAXPATHLEN);
-	kmem_free(oldname, MAXPATHLEN);
-#endif
 
 	dsl_dataset_rele(ds, FTAG);
 	return (0);
@@ -1709,6 +1701,11 @@ int
 dsl_dataset_rename_snapshot(const char *fsname,
     const char *oldsnapname, const char *newsnapname, boolean_t recursive)
 {
+#ifdef _KERNEL
+	char *oldname, *newname;
+#endif
+	int error;
+
 	dsl_dataset_rename_snapshot_arg_t ddrsa;
 
 	ddrsa.ddrsa_fsname = fsname;
@@ -1716,8 +1713,21 @@ dsl_dataset_rename_snapshot(const char *fsname,
 	ddrsa.ddrsa_newsnapname = newsnapname;
 	ddrsa.ddrsa_recursive = recursive;
 
-	return (dsl_sync_task(fsname, dsl_dataset_rename_snapshot_check,
-	    dsl_dataset_rename_snapshot_sync, &ddrsa, 1));
+	error = dsl_sync_task(fsname, dsl_dataset_rename_snapshot_check,
+	    dsl_dataset_rename_snapshot_sync, &ddrsa, 1);
+
+	if (error)
+	    return (SET_ERROR(error));
+
+#ifdef _KERNEL
+	oldname = kmem_asprintf("%s@%s", fsname, oldsnapname);
+	newname = kmem_asprintf("%s@%s", fsname, newsnapname);
+	zvol_rename_minors(oldname, newname);
+	strfree(newname);
+	strfree(oldname);
+#endif
+
+	return (0);
 }
 
 /*
@@ -1761,61 +1771,87 @@ typedef struct dsl_dataset_rollback_arg {
 static int
 dsl_dataset_rollback_check(void *arg, dmu_tx_t *tx)
 {
-  dsl_dataset_rollback_arg_t *ddra = arg;
-  dsl_pool_t *dp = dmu_tx_pool(tx);
-  dsl_dataset_t *ds;
-  int64_t unused_refres_delta;
-  int error;
-  
-  error = dsl_dataset_hold(dp, ddra->ddra_fsname, FTAG, &ds);
-  if (error != 0)
-    return (error);
-  
-  /* must not be a snapshot */
-  if (dsl_dataset_is_snapshot(ds)) {
-    dsl_dataset_rele(ds, FTAG);
-    return (SET_ERROR(EINVAL));
-  }
-  
-  /* must have a most recent snapshot */
-  if (ds->ds_phys->ds_prev_snap_txg < TXG_INITIAL) {
-    dsl_dataset_rele(ds, FTAG);
-    return (SET_ERROR(EINVAL));
-  }
-  
-  error = dsl_dataset_handoff_check(ds, ddra->ddra_owner, tx);
-  if (error != 0) {
-    dsl_dataset_rele(ds, FTAG);
-    return (error);
-  }
-  /*
-   * Check if the snap we are rolling back to uses more than
-   * the refquota.
-   */
-  if (ds->ds_quota != 0 &&
-      ds->ds_prev->ds_phys->ds_referenced_bytes > ds->ds_quota) {
-    dsl_dataset_rele(ds, FTAG);
-    return (SET_ERROR(EDQUOT));
-  }
-  
-  /*
-   * When we do the clone swap, we will temporarily use more space
-   * due to the refreservation (the head will no longer have any
-   * unique space, so the entire amount of the refreservation will need
-   * to be free).  We will immediately destroy the clone, freeing
-   * this space, but the freeing happens over many txg's.
-   */
-  unused_refres_delta = (int64_t)MIN(ds->ds_reserved,
-				     ds->ds_phys->ds_unique_bytes);
-  
-  if (unused_refres_delta > 0 &&
-      unused_refres_delta >
-      dsl_dir_space_available(ds->ds_dir, NULL, 0, TRUE)) {
-    dsl_dataset_rele(ds, FTAG);
-    return (SET_ERROR(ENOSPC));
-  }
-  dsl_dataset_rele(ds, FTAG);
-  return (0);
+	dsl_dataset_rollback_arg_t *ddra = arg;
+	dsl_pool_t *dp = dmu_tx_pool(tx);
+	dsl_dataset_t *ds;
+	int64_t unused_refres_delta;
+	int error;
+	nvpair_t *pair;
+	nvlist_t *proprequest, *bookmarks;
+
+	error = dsl_dataset_hold(dp, ddra->ddra_fsname, FTAG, &ds);
+	if (error != 0)
+		return (error);
+
+	/* must not be a snapshot */
+	if (dsl_dataset_is_snapshot(ds)) {
+		dsl_dataset_rele(ds, FTAG);
+		return (SET_ERROR(EINVAL));
+	}
+
+	/* must have a most recent snapshot */
+	if (ds->ds_phys->ds_prev_snap_txg < TXG_INITIAL) {
+		dsl_dataset_rele(ds, FTAG);
+		return (SET_ERROR(EINVAL));
+	}
+
+	/* must not have any bookmarks after the most recent snapshot */
+	VERIFY0(nvlist_alloc(&proprequest, NV_UNIQUE_NAME, KM_PUSHPAGE));
+	fnvlist_add_boolean(proprequest, zfs_prop_to_name(ZFS_PROP_CREATETXG));
+	VERIFY0(nvlist_alloc(&bookmarks, NV_UNIQUE_NAME, KM_PUSHPAGE));
+	error = dsl_get_bookmarks_impl(ds, proprequest, bookmarks);
+	fnvlist_free(proprequest);
+	if (error != 0)
+		return (error);
+	for (pair = nvlist_next_nvpair(bookmarks, NULL);
+	    pair != NULL; pair = nvlist_next_nvpair(bookmarks, pair)) {
+		nvlist_t *valuenv =
+		    fnvlist_lookup_nvlist(fnvpair_value_nvlist(pair),
+		    zfs_prop_to_name(ZFS_PROP_CREATETXG));
+		uint64_t createtxg = fnvlist_lookup_uint64(valuenv, "value");
+		if (createtxg > ds->ds_phys->ds_prev_snap_txg) {
+			fnvlist_free(bookmarks);
+			dsl_dataset_rele(ds, FTAG);
+			return (SET_ERROR(EEXIST));
+		}
+	}
+	fnvlist_free(bookmarks);
+
+	error = dsl_dataset_handoff_check(ds, ddra->ddra_owner, tx);
+	if (error != 0) {
+		dsl_dataset_rele(ds, FTAG);
+		return (error);
+	}
+
+	/*
+	 * Check if the snap we are rolling back to uses more than
+	 * the refquota.
+	 */
+	if (ds->ds_quota != 0 &&
+	    ds->ds_prev->ds_phys->ds_referenced_bytes > ds->ds_quota) {
+		dsl_dataset_rele(ds, FTAG);
+		return (SET_ERROR(EDQUOT));
+	}
+
+	/*
+	 * When we do the clone swap, we will temporarily use more space
+	 * due to the refreservation (the head will no longer have any
+	 * unique space, so the entire amount of the refreservation will need
+	 * to be free).  We will immediately destroy the clone, freeing
+	 * this space, but the freeing happens over many txg's.
+	 */
+	unused_refres_delta = (int64_t)MIN(ds->ds_reserved,
+	    ds->ds_phys->ds_unique_bytes);
+
+	if (unused_refres_delta > 0 &&
+	    unused_refres_delta >
+	    dsl_dir_space_available(ds->ds_dir, NULL, 0, TRUE)) {
+		dsl_dataset_rele(ds, FTAG);
+		return (SET_ERROR(ENOSPC));
+	}
+
+	dsl_dataset_rele(ds, FTAG);
+	return (0);
 }
 
 
@@ -3005,9 +3041,12 @@ dsl_dataset_space_wouldfree(dsl_dataset_t *firstsnap,
  * 'earlier' is before 'later'.  Or 'earlier' could be the origin of
  * 'later's filesystem.  Or 'earlier' could be an older snapshot in the origin's
  * filesystem.  Or 'earlier' could be the origin's origin.
+ *
+ * If non-zero, earlier_txg is used instead of earlier's ds_creation_txg.
  */
 boolean_t
-dsl_dataset_is_before(dsl_dataset_t *later, dsl_dataset_t *earlier)
+dsl_dataset_is_before(dsl_dataset_t *later, dsl_dataset_t *earlier,
+	uint64_t earlier_txg)
 {
 	dsl_pool_t *dp = later->ds_dir->dd_pool;
 	int error;
@@ -3015,9 +3054,13 @@ dsl_dataset_is_before(dsl_dataset_t *later, dsl_dataset_t *earlier)
 	dsl_dataset_t *origin;
 
 	ASSERT(dsl_pool_config_held(dp));
+	ASSERT(dsl_dataset_is_snapshot(earlier) || earlier_txg != 0);
 
-	if (earlier->ds_phys->ds_creation_txg >=
-	    later->ds_phys->ds_creation_txg)
+	if (earlier_txg == 0)
+		earlier_txg = earlier->ds_phys->ds_creation_txg;
+
+	if (dsl_dataset_is_snapshot(later) &&
+	    earlier_txg >= later->ds_phys->ds_creation_txg)
 		return (B_FALSE);
 
 	if (later->ds_dir == earlier->ds_dir)
@@ -3031,9 +3074,17 @@ dsl_dataset_is_before(dsl_dataset_t *later, dsl_dataset_t *earlier)
 	    later->ds_dir->dd_phys->dd_origin_obj, FTAG, &origin);
 	if (error != 0)
 		return (B_FALSE);
-	ret = dsl_dataset_is_before(origin, earlier);
+	ret = dsl_dataset_is_before(origin, earlier, earlier_txg);
 	dsl_dataset_rele(origin, FTAG);
 	return (ret);
+}
+
+
+void
+dsl_dataset_zapify(dsl_dataset_t *ds, dmu_tx_t *tx)
+{
+	objset_t *mos = ds->ds_dir->dd_pool->dp_meta_objset;
+	dmu_object_zapify(mos, ds->ds_object, DMU_OT_DSL_DATASET, tx);
 }
 
 #if defined(_KERNEL) && defined(HAVE_SPL)

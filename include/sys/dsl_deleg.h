@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012 by Delphix. All rights reserved.
+ * Copyright (c) 2013 by Delphix. All rights reserved.
  */
 
 #ifndef	_SYS_DSL_DELEG_H
@@ -58,6 +58,7 @@ extern "C" {
 #define	ZFS_DELEG_PERM_DIFF		"diff"
 #define ZFS_DELEG_PERM_KEY              "key"
 #define ZFS_DELEG_PERM_KEYCHANGE        "keychange"
+#define	ZFS_DELEG_PERM_BOOKMARK		"bookmark"
 
 /*
  * Note: the names of properties that are marked delegatable are also

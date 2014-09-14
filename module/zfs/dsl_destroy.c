@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2013 by Delphix. All rights reserved.
+ * Copyright (c) 2012, 2014 by Delphix. All rights reserved.
  * Copyright (c) 2013 Steven Hartland. All rights reserved.
  */
 
@@ -38,6 +38,7 @@
 #include <sys/zfeature.h>
 #include <sys/zfs_ioctl.h>
 #include <sys/dsl_deleg.h>
+#include <sys/dmu_impl.h>
 
 typedef struct dmu_snapshots_destroy_arg {
 	nvlist_t *dsda_snaps;
@@ -141,6 +142,8 @@ process_old_cb(void *arg, const blkptr_t *bp, dmu_tx_t *tx)
 {
 	struct process_old_arg *poa = arg;
 	dsl_pool_t *dp = poa->ds->ds_dir->dd_pool;
+
+	ASSERT(!BP_IS_HOLE(bp));
 
 	if (bp->blk_birth <= poa->ds->ds_phys->ds_prev_snap_txg) {
 		dsl_deadlist_insert(&poa->ds->ds_deadlist, bp, tx);
@@ -451,7 +454,7 @@ dsl_destroy_snapshot_sync_impl(dsl_dataset_t *ds, boolean_t defer, dmu_tx_t *tx)
 		VERIFY0(zap_destroy(mos, ds->ds_phys->ds_userrefs_obj, tx));
 	dsl_dir_rele(ds->ds_dir, ds);
 	ds->ds_dir = NULL;
-	VERIFY0(dmu_object_free(mos, obj, tx));
+	dmu_object_free_zapified(mos, obj, tx);
 }
 
 static void
@@ -537,12 +540,12 @@ struct killarg {
 /* ARGSUSED */
 static int
 kill_blkptr(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
-    const zbookmark_t *zb, const dnode_phys_t *dnp, void *arg)
+    const zbookmark_phys_t *zb, const dnode_phys_t *dnp, void *arg)
 {
 	struct killarg *ka = arg;
 	dmu_tx_t *tx = ka->tx;
 
-	if (bp == NULL)
+	if (BP_IS_HOLE(bp) || BP_IS_EMBEDDED(bp))
 		return (0);
 
 	if (zb->zb_level == ZB_ZIL_LEVEL) {
@@ -592,6 +595,7 @@ dsl_destroy_head_check_impl(dsl_dataset_t *ds, int expected_holds)
 	uint64_t count;
 	objset_t *mos;
 
+	ASSERT(!dsl_dataset_is_snapshot(ds));
 	if (dsl_dataset_is_snapshot(ds))
 		return (SET_ERROR(EINVAL));
 
@@ -678,7 +682,7 @@ dsl_dir_destroy_sync(uint64_t ddobj, dmu_tx_t *tx)
 	    dd->dd_parent->dd_phys->dd_child_dir_zapobj, dd->dd_myname, tx));
 
 	dsl_dir_rele(dd, FTAG);
-	VERIFY0(dmu_object_free(mos, ddobj, tx));
+	dmu_object_free_zapified(mos, ddobj, tx);
 }
 
 void
@@ -688,7 +692,6 @@ dsl_destroy_head_sync_impl(dsl_dataset_t *ds, dmu_tx_t *tx)
 	objset_t *mos = dp->dp_meta_objset;
 	uint64_t obj, ddobj, prevobj = 0;
 	boolean_t rmorigin;
-	zfeature_info_t *async_destroy;
 	objset_t *os;
 
 	ASSERT3U(ds->ds_phys->ds_num_children, <=, 1);
@@ -705,7 +708,7 @@ dsl_destroy_head_sync_impl(dsl_dataset_t *ds, dmu_tx_t *tx)
 	    ds->ds_prev->ds_phys->ds_num_children == 2 &&
 	    ds->ds_prev->ds_userrefs == 0);
 
-	/* Remove our reservation */
+	/* Remove our reservation. */
 	if (ds->ds_reserved != 0) {
 		dsl_dataset_set_refreservation_sync_impl(ds,
 		    (ZPROP_SRC_NONE | ZPROP_SRC_LOCAL | ZPROP_SRC_RECEIVED),
@@ -733,9 +736,6 @@ dsl_destroy_head_sync_impl(dsl_dataset_t *ds, dmu_tx_t *tx)
 		ds->ds_prev->ds_phys->ds_num_children--;
 	}
 
-	async_destroy =
-	    &spa_feature_table[SPA_FEATURE_ASYNC_DESTROY];
-
 	/*
 	 * Destroy the deadlist.  Unless it's a clone, the
 	 * deadlist should be empty.  (If it's a clone, it's
@@ -748,7 +748,7 @@ dsl_destroy_head_sync_impl(dsl_dataset_t *ds, dmu_tx_t *tx)
 
 	VERIFY0(dmu_objset_from_ds(ds, &os));
 
-	if (!spa_feature_is_enabled(dp->dp_spa, async_destroy)) {
+	if (!spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_ASYNC_DESTROY)) {
 		old_synchronous_dataset_destroy(ds, tx);
 	} else {
 		/*
@@ -759,10 +759,11 @@ dsl_destroy_head_sync_impl(dsl_dataset_t *ds, dmu_tx_t *tx)
 
 		zil_destroy_sync(dmu_objset_zil(os), tx);
 
-		if (!spa_feature_is_active(dp->dp_spa, async_destroy)) {
+		if (!spa_feature_is_active(dp->dp_spa,
+		    SPA_FEATURE_ASYNC_DESTROY)) {
 			dsl_scan_t *scn = dp->dp_scan;
-
-			spa_feature_incr(dp->dp_spa, async_destroy, tx);
+			spa_feature_incr(dp->dp_spa, SPA_FEATURE_ASYNC_DESTROY,
+			    tx);
 			dp->dp_bptree_obj = bptree_alloc(mos, tx);
 			VERIFY0(zap_add(mos,
 			    DMU_POOL_DIRECTORY_OBJECT,
@@ -825,6 +826,10 @@ dsl_destroy_head_sync_impl(dsl_dataset_t *ds, dmu_tx_t *tx)
 			   SPA_FEATURE_ENCRYPTION,
 			   tx);
 	}
+	if (ds->ds_bookmarks != 0) {
+		VERIFY0(zap_destroy(mos,
+		    ds->ds_bookmarks, tx));
+		spa_feature_decr(dp->dp_spa, SPA_FEATURE_BOOKMARKS, tx);
 
 	spa_prop_clear_bootfs(dp->dp_spa, ds->ds_object, tx);
 
@@ -833,7 +838,7 @@ dsl_destroy_head_sync_impl(dsl_dataset_t *ds, dmu_tx_t *tx)
 	ASSERT0(ds->ds_phys->ds_userrefs_obj);
 	dsl_dir_rele(ds->ds_dir, ds);
 	ds->ds_dir = NULL;
-	VERIFY0(dmu_object_free(mos, obj, tx));
+	dmu_object_free_zapified(mos, obj, tx);
 
 	dsl_dir_destroy_sync(ddobj, tx);
 
@@ -889,8 +894,7 @@ dsl_destroy_head(const char *name)
 	error = spa_open(name, &spa, FTAG);
 	if (error != 0)
 		return (error);
-	isenabled = spa_feature_is_enabled(spa,
-	    &spa_feature_table[SPA_FEATURE_ASYNC_DESTROY]);
+	isenabled = spa_feature_is_enabled(spa, SPA_FEATURE_ASYNC_DESTROY);
 	spa_close(spa, FTAG);
 
 	ddha.ddha_name = name;

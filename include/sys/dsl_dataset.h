@@ -50,9 +50,9 @@ struct dsl_crypto_ctx;
 #define	DS_FLAG_INCONSISTENT	(1ULL<<0)
 #define	DS_IS_INCONSISTENT(ds)	\
 	((ds)->ds_phys->ds_flags & DS_FLAG_INCONSISTENT)
+
 /*
- * Note: nopromote can not yet be set, but we want support for it in this
- * on-disk version, so that we don't need to upgrade for it later.
+ * Do not allow this dataset to be promoted.
  */
 #define	DS_FLAG_NOPROMOTE	(1ULL<<1)
 
@@ -70,6 +70,18 @@ struct dsl_crypto_ctx;
 #define	DS_FLAG_DEFER_DESTROY	(1ULL<<3)
 #define	DS_IS_DEFER_DESTROY(ds)	\
 	((ds)->ds_phys->ds_flags & DS_FLAG_DEFER_DESTROY)
+
+/*
+ * DS_FIELD_* are strings that are used in the "extensified" dataset zap object.
+ * They should be of the format <reverse-dns>:<field>.
+ */
+
+/*
+ * This field's value is the object ID of a zap object which contains the
+ * bookmarks of this dataset.  If it is present, then this dataset is counted
+ * in the refcount of the SPA_FEATURES_BOOKMARKS feature.
+ */
+#define	DS_FIELD_BOOKMARK_NAMES "com.delphix:bookmarks"
 
 /*
  * DS_FLAG_CI_DATASET is set if the dataset contains a file system whose
@@ -123,6 +135,7 @@ typedef struct dsl_dataset {
 
 	/* only used in syncing context, only valid for non-snapshots: */
 	struct dsl_dataset *ds_prev;
+	uint64_t ds_bookmarks;  /* DMU_OTN_ZAP_METADATA */
 
 	/* has internal locking: */
 	dsl_deadlist_t ds_deadlist;
@@ -248,7 +261,8 @@ int dsl_dataset_set_refquota(const char *dsname, zprop_source_t source,
 int dsl_dataset_set_refreservation(const char *dsname, zprop_source_t source,
     uint64_t reservation);
 
-boolean_t dsl_dataset_is_before(dsl_dataset_t *later, dsl_dataset_t *earlier);
+boolean_t dsl_dataset_is_before(dsl_dataset_t *later, dsl_dataset_t *earlier,
+    uint64_t earlier_txg);
 void dsl_dataset_long_hold(dsl_dataset_t *ds, void *tag);
 void dsl_dataset_long_rele(dsl_dataset_t *ds, void *tag);
 boolean_t dsl_dataset_long_held(dsl_dataset_t *ds);
@@ -274,6 +288,7 @@ void dsl_dataset_set_refreservation_sync_impl(dsl_dataset_t *ds,
 int dsl_dataset_rollback(const char *fsname, void *owner, 
 			 struct dsl_crypto_ctx *dcc,
 			 nvlist_t *result);
+void dsl_dataset_zapify(dsl_dataset_t *ds, dmu_tx_t *tx);
 
 #ifdef ZFS_DEBUG
 #define	dprintf_ds(ds, fmt, ...) do { \

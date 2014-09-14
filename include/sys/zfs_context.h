@@ -25,7 +25,7 @@
 /*
  * Copyright 2011 Nexenta Systems, Inc. All rights reserved.
  * Copyright (c) 2012, Joyent, Inc. All rights reserved.
- * Copyright (c) 2013 by Delphix. All rights reserved.
+ * Copyright (c) 2012, 2014 by Delphix. All rights reserved.
  */
 
 #ifndef _SYS_ZFS_CONTEXT_H
@@ -148,9 +148,9 @@ extern void dprintf_setup(int *argc, char **argv);
 extern void __dprintf(const char *file, const char *func,
     int line, const char *fmt, ...);
 extern void cmn_err(int, const char *, ...);
-extern void vcmn_err(int, const char *, __va_list);
+extern void vcmn_err(int, const char *, va_list);
 extern void panic(const char *, ...);
-extern void vpanic(const char *, __va_list);
+extern void vpanic(const char *, va_list);
 
 #define	fm_panic	panic
 
@@ -639,7 +639,7 @@ extern void delay(clock_t ticks);
 
 extern uint64_t physmem;
 
-extern int highbit(ulong_t i);
+extern int highbit64(uint64_t i);
 extern int random_get_bytes(uint8_t *ptr, size_t len);
 extern int random_get_pseudo_bytes(uint8_t *ptr, size_t len);
 
