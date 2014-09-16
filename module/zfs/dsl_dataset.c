@@ -743,9 +743,9 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
      */
     if (dcc && (dcc->dcc_crypt != ZIO_CRYPT_OFF) &&
         spa_feature_is_enabled(dp->dp_spa,
-                               &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
+                               SPA_FEATURE_ENCRYPTION)) {
         spa_feature_incr(dp->dp_spa,
-                         &spa_feature_table[SPA_FEATURE_ENCRYPTION],
+                         SPA_FEATURE_ENCRYPTION,
                          tx);
     }
 
@@ -1897,7 +1897,7 @@ dsl_dataset_rollback_sync(void *arg, dmu_tx_t *tx)
  * notes above zfs_suspend_fs() for further details.
  */
 int
-dsl_dataset_rollback(const char *fsname, void *owner, 
+dsl_dataset_rollback(const char *fsname, void *owner,
 		     dsl_crypto_ctx_t *dcc,
 		     nvlist_t *result)
 {

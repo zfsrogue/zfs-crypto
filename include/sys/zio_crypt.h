@@ -82,11 +82,11 @@ extern zio_crypt_wrap_info_t zio_crypt_wrap_table[ZIO_CRYPT_WRAP_FUNCTIONS];
 enum zio_crypt zio_crypt_select(enum zio_crypt child, enum zio_crypt parent);
 uint64_t zio_crypt_select_wrap(enum zio_crypt);
 
-extern int zio_encrypt_data(int crypt, zcrypt_key_t *key, zbookmark_t *bookmark,
+extern int zio_encrypt_data(int crypt, zcrypt_key_t *key, zbookmark_phys_t *bookmark,
     uint64_t txg, int type, boolean_t dedup, void *src, uint64_t srcsize,
     void **destp, char *mac, char *iv);
 
-extern int zio_decrypt_data(zcrypt_key_t *key, zbookmark_t *bookmark,
+extern int zio_decrypt_data(zcrypt_key_t *key, zbookmark_phys_t *bookmark,
     uint64_t txg, int type, void *src, uint64_t srcsize, char *iv, char *mac,
     void *dest, uint64_t destsize);
 

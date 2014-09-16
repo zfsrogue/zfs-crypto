@@ -431,7 +431,7 @@ _NOTE(CONSTCOND) } while (0)
 	(BP_IS_EMBEDDED(bp) ? 0 : \
 	(DVA_GET_GANG(&(bp)->blk_dva[0]) + \
 	DVA_GET_GANG(&(bp)->blk_dva[1]) + \
-        (BP_IS_ENCRYPTED(bp) ? 0 : DVA_GET_GANG(&(bp)->blk_dva[2])))
+	 (BP_IS_ENCRYPTED(bp) ? 0 : DVA_GET_GANG(&(bp)->blk_dva[2]))))
 
 #define	DVA_EQUAL(dva1, dva2)	\
 	((dva1)->dva_word[1] == (dva2)->dva_word[1] && \

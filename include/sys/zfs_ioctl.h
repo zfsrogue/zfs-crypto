@@ -95,6 +95,7 @@ typedef enum drr_headertype {
 #define	DMU_BACKUP_FEATURE_DEDUPPROPS		(1<<1)
 #define	DMU_BACKUP_FEATURE_SA_SPILL		(1<<2)
 #define DMU_BACKUP_FEATURE_ENCRYPT      (1<<3)
+#define DMU_BACKUP_FEATURE_LABELED              (1<<4)
 /* flags #3 - #15 are reserved for incompatible closed-source implementations */
 #define	DMU_BACKUP_FEATURE_EMBED_DATA		(1<<16)
 #define	DMU_BACKUP_FEATURE_EMBED_DATA_LZ4	(1<<17)
@@ -104,7 +105,7 @@ typedef enum drr_headertype {
  */
 #define	DMU_BACKUP_FEATURE_MASK	(DMU_BACKUP_FEATURE_DEDUP | \
 		DMU_BACKUP_FEATURE_DEDUPPROPS | DMU_BACKUP_FEATURE_SA_SPILL | \
-        DMU_BACKUP_FEATURE_ENCRYPT | DMU_BACKUP_FEATURE_LABELED |
+        DMU_BACKUP_FEATURE_ENCRYPT | DMU_BACKUP_FEATURE_LABELED | \
     DMU_BACKUP_FEATURE_EMBED_DATA | DMU_BACKUP_FEATURE_EMBED_DATA_LZ4)
 
 /* Are all features in the given flag word currently supported? */

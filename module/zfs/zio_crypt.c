@@ -151,7 +151,7 @@ zio_crypt_select_wrap(enum zio_crypt wcrypt)
  */
 static void
 zio_crypt_gen_data_iv(int crypt, int type, boolean_t dedup, void *data,
-    uint64_t datalen, zcrypt_key_t *key, uint64_t txg, zbookmark_t *bookmark,
+    uint64_t datalen, zcrypt_key_t *key, uint64_t txg, zbookmark_phys_t *bookmark,
     char *iv)
 {
 	size_t ivlen = ZIO_CRYPT_DATA_IVLEN;
@@ -280,7 +280,7 @@ zio_crypt_setup_mech_with_iv(int crypt, int type, size_t datalen, void *iv)
 
 static crypto_mechanism_t *
 zio_crypt_setup_mech_gen_iv(int crypt, int type, boolean_t dedup,
-    zcrypt_key_t *key, uint64_t txg, zbookmark_t *bookmark,
+    zcrypt_key_t *key, uint64_t txg, zbookmark_phys_t *bookmark,
     void *data, size_t datalen, char *iv)
 {
 	crypto_mechanism_t *mech;
@@ -330,7 +330,7 @@ zio_crypt_free_mech(crypto_mechanism_t *mech)
  * The mac and iv are filled in and returned along with the ciphertext.
  */
 int
-zio_encrypt_data(int crypt, zcrypt_key_t *key, zbookmark_t *bookmark,
+zio_encrypt_data(int crypt, zcrypt_key_t *key, zbookmark_phys_t *bookmark,
     uint64_t txg, int type, boolean_t dedup, void *src, uint64_t size,
     void **destp, char *mac, char *iv)
 {
@@ -521,7 +521,7 @@ out:
  * To be called only from the zio pipeline.
  */
 int
-zio_decrypt_data(zcrypt_key_t *key, zbookmark_t *bookmark,
+zio_decrypt_data(zcrypt_key_t *key, zbookmark_phys_t *bookmark,
     uint64_t txg, int type, void *src, uint64_t srcsize, char *mac, char *iv,
     void *dest, uint64_t destsize)
 {

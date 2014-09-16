@@ -1761,13 +1761,13 @@ zfs_feature_encryption(const char *dsname, void *arg)
             if (!error) {
 
                 if (!spa_feature_is_enabled(dp->dp_spa,
-                                            &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
+                                            SPA_FEATURE_ENCRYPTION)) {
                     spa_feature_enable(dp->dp_spa,
-                                       &spa_feature_table[SPA_FEATURE_ENCRYPTION],
+                                       SPA_FEATURE_ENCRYPTION,
                                        tx);
                 }
                 spa_feature_incr(dp->dp_spa,
-                                 &spa_feature_table[SPA_FEATURE_ENCRYPTION],
+                                 SPA_FEATURE_ENCRYPTION,
                                  tx);
                 dmu_tx_commit(tx);
 
@@ -5232,7 +5232,7 @@ zfs_ioc_crypto_key_load(zfs_cmd_t *zc)
         return (error);
 
     if (!spa_feature_is_enabled(spa,
-                                &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
+                                SPA_FEATURE_ENCRYPTION)) {
         spa_close(spa, FTAG);
         return (ENOTSUP);
     }
@@ -5268,7 +5268,7 @@ zfs_ioc_crypto_key_inherit(zfs_cmd_t *zc)
         return (error);
 
     if (!spa_feature_is_enabled(spa,
-                                &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
+                                SPA_FEATURE_ENCRYPTION)) {
         spa_close(spa, FTAG);
         return (ENOTSUP);
     }
@@ -5299,7 +5299,7 @@ zfs_ioc_crypto_key_unload(zfs_cmd_t *zc)
         return (error);
 
     if (!spa_feature_is_enabled(spa,
-                                &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
+                                SPA_FEATURE_ENCRYPTION)) {
         spa_close(spa, FTAG);
         return (ENOTSUP);
     }
@@ -5327,7 +5327,7 @@ zfs_ioc_crypto_key_new(zfs_cmd_t *zc)
         return (error);
 
     if (!spa_feature_is_enabled(spa,
-                                &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
+                                SPA_FEATURE_ENCRYPTION)) {
         spa_close(spa, FTAG);
         return (ENOTSUP);
     }
@@ -5350,7 +5350,7 @@ zfs_ioc_crypto_key_change(zfs_cmd_t *zc)
         return (error);
 
     if (!spa_feature_is_enabled(spa,
-                                &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
+                                SPA_FEATURE_ENCRYPTION)) {
         spa_close(spa, FTAG);
         return (ENOTSUP);
     }

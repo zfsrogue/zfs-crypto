@@ -1000,7 +1000,7 @@ dmu_recv_verify_features(dsl_dataset_t *ds, struct drr_begin *drrb)
                                     /*, DSL_PROP_GET_EFFECTIVE*/)); //FIXME
         if ((featureflags & DMU_BACKUP_FEATURE_ENCRYPT) &&
             !spa_feature_is_enabled(dsl_dataset_get_spa(ds),
-                                    &spa_feature_table[SPA_FEATURE_ENCRYPTION])) {
+                                    SPA_FEATURE_ENCRYPTION)) {
                 return (B_FALSE);
         } else if (crypt != ZIO_CRYPT_OFF) {
                 return (featureflags & DMU_BACKUP_FEATURE_ENCRYPT);

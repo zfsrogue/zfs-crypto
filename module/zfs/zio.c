@@ -1088,7 +1088,7 @@ static int
 zio_read_bp_init(zio_t *zio)
 {
   blkptr_t *bp = zio->io_bp;
-  
+
   /*
    * Don't add compression/crypto to the transform stack if this is a
    * raw read (ie scrub/resilver).
@@ -1101,7 +1101,7 @@ zio_read_bp_init(zio_t *zio)
     uint64_t psize =
       BP_IS_EMBEDDED(bp) ? BPE_GET_PSIZE(bp) : BP_GET_PSIZE(bp);
     void *cbuf;
-    
+
     if (BP_GET_COMPRESS(bp) != ZIO_COMPRESS_OFF) {
       cbuf = zio_buf_alloc(psize);
       zio_push_transform(zio, cbuf, psize, psize,
@@ -1110,7 +1110,7 @@ zio_read_bp_init(zio_t *zio)
     if (BP_IS_ENCRYPTED(bp)) {
       zcrypt_key_t *key;
       ASSERT(spa_version(zio->io_spa) >= SPA_VERSION_CRYPTO);
-      
+
       key = zcrypt_key_lookup(zio->io_spa,
 			      zio->io_bookmark.zb_objset, bp->blk_birth);
       if (key == NULL) {
@@ -1134,16 +1134,16 @@ zio_read_bp_init(zio_t *zio)
   } else {
     ASSERT(!BP_IS_EMBEDDED(bp));
   }
-  
+
   if (!DMU_OT_IS_METADATA(BP_GET_TYPE(bp)) && BP_GET_LEVEL(bp) == 0)
     zio->io_flags |= ZIO_FLAG_DONT_CACHE;
-  
+
   if (BP_GET_TYPE(bp) == DMU_OT_DDT_ZAP)
     zio->io_flags |= ZIO_FLAG_DONT_CACHE;
-  
+
   if (BP_GET_DEDUP(bp) && zio->io_child_type == ZIO_CHILD_LOGICAL)
     zio->io_pipeline = ZIO_DDT_READ_PIPELINE;
-  
+
   return (ZIO_PIPELINE_CONTINUE);
 }
 
@@ -1303,7 +1303,7 @@ zio_write_bp_init(zio_t *zio)
 				zio_buf_free(cbuf, lsize);
 			} else {
 				zio_push_transform(zio, cbuf,
-				    psize, lsize, NULL);
+								   psize, lsize, NULL, NULL);
 			}
 		}
 	}
