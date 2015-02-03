@@ -36,6 +36,7 @@
 #include <sys/zio.h>
 #include <sys/dmu_zfetch.h>
 #include <sys/range_tree.h>
+#include <sys/trace_dnode.h>
 
 static kmem_cache_t *dnode_cache;
 /*
@@ -365,7 +366,7 @@ static dnode_t *
 dnode_create(objset_t *os, dnode_phys_t *dnp, dmu_buf_impl_t *db,
     uint64_t object, dnode_handle_t *dnh)
 {
-	dnode_t *dn = kmem_cache_alloc(dnode_cache, KM_PUSHPAGE);
+	dnode_t *dn = kmem_cache_alloc(dnode_cache, KM_SLEEP);
 
 	ASSERT(!POINTER_IS_VALID(dn->dn_objset));
 	dn->dn_moved = 0;
@@ -1069,8 +1070,7 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag,
 		int i;
 		dnode_children_t *winner;
 		children_dnodes = kmem_alloc(sizeof (dnode_children_t) +
-		    (epb - 1) * sizeof (dnode_handle_t),
-		    KM_PUSHPAGE | KM_NODEBUG);
+		    (epb - 1) * sizeof (dnode_handle_t), KM_SLEEP);
 		children_dnodes->dnc_count = epb;
 		dnh = &children_dnodes->dnc_children[0];
 		for (i = 0; i < epb; i++) {
@@ -1900,6 +1900,15 @@ dnode_next_offset(dnode_t *dn, int flags, uint64_t *offset,
 	while (error == 0 && --lvl >= minlvl) {
 		error = dnode_next_offset_level(dn,
 		    flags, offset, lvl, blkfill, txg);
+	}
+
+	/*
+	 * There's always a "virtual hole" at the end of the object, even
+	 * if all BP's which physically exist are non-holes.
+	 */
+	if ((flags & DNODE_FIND_HOLE) && error == ESRCH && txg == 0 &&
+	    minlvl == 1 && blkfill == 1 && !(flags & DNODE_FIND_BACKWARDS)) {
+		error = 0;
 	}
 
 	if (error == 0 && (flags & DNODE_FIND_BACKWARDS ?

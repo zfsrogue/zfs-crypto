@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2013 by Delphix. All rights reserved.
+ * Copyright (c) 2011, 2014 by Delphix. All rights reserved.
  * Copyright (c) 2013 Steven Hartland. All rights reserved.
  */
 
@@ -46,6 +46,7 @@
 #include <sys/zfeature.h>
 #include <sys/zil_impl.h>
 #include <sys/dsl_userhold.h>
+#include <sys/trace_txg.h>
 
 /*
  * ZFS Write Throttle
@@ -323,7 +324,7 @@ dsl_pool_close(dsl_pool_t *dp)
 	mutex_destroy(&dp->dp_lock);
 	taskq_destroy(dp->dp_iput_taskq);
 	if (dp->dp_blkstats)
-		kmem_free(dp->dp_blkstats, sizeof (zfs_all_blkstats_t));
+		vmem_free(dp->dp_blkstats, sizeof (zfs_all_blkstats_t));
 	kmem_free(dp, sizeof (dsl_pool_t));
 }
 

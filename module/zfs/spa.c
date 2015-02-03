@@ -22,7 +22,7 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2013 by Delphix. All rights reserved.
- * Copyright 2013 Nexenta Systems, Inc. All rights reserved.
+ * Copyright (c) 2013, 2014, Nexenta Systems, Inc.  All rights reserved.
  */
 
 /*
@@ -171,7 +171,7 @@ spa_prop_add_list(nvlist_t *nvl, zpool_prop_t prop, char *strval,
 	const char *propname = zpool_prop_to_name(prop);
 	nvlist_t *propval;
 
-	VERIFY(nvlist_alloc(&propval, NV_UNIQUE_NAME, KM_PUSHPAGE) == 0);
+	VERIFY(nvlist_alloc(&propval, NV_UNIQUE_NAME, KM_SLEEP) == 0);
 	VERIFY(nvlist_add_uint64(propval, ZPROP_SOURCE, src) == 0);
 
 	if (strval != NULL)
@@ -286,7 +286,7 @@ spa_prop_get(spa_t *spa, nvlist_t **nvp)
 	zap_attribute_t za;
 	int err;
 
-	err = nvlist_alloc(nvp, NV_UNIQUE_NAME, KM_PUSHPAGE);
+	err = nvlist_alloc(nvp, NV_UNIQUE_NAME, KM_SLEEP);
 	if (err)
 		return (err);
 
@@ -338,7 +338,7 @@ spa_prop_get(spa_t *spa, nvlist_t **nvp)
 
 				strval = kmem_alloc(
 				    MAXNAMELEN + strlen(MOS_DIR_NAME) + 1,
-				    KM_PUSHPAGE);
+				    KM_SLEEP);
 				dsl_dataset_name(ds, strval);
 				dsl_dataset_rele(ds, FTAG);
 				dsl_pool_config_exit(dp, FTAG);
@@ -357,7 +357,7 @@ spa_prop_get(spa_t *spa, nvlist_t **nvp)
 
 		case 1:
 			/* string property */
-			strval = kmem_alloc(za.za_num_integers, KM_PUSHPAGE);
+			strval = kmem_alloc(za.za_num_integers, KM_SLEEP);
 			err = zap_lookup(mos, spa->spa_pool_props_object,
 			    za.za_name, 1, za.za_num_integers, strval);
 			if (err) {
@@ -612,7 +612,7 @@ spa_configfile_set(spa_t *spa, nvlist_t *nvp, boolean_t need_sync)
 		return;
 
 	dp = kmem_alloc(sizeof (spa_config_dirent_t),
-	    KM_PUSHPAGE);
+	    KM_SLEEP);
 
 	if (cachefile[0] == '\0')
 		dp->scd_path = spa_strdup(spa_config_path);
@@ -1260,7 +1260,9 @@ spa_unload(spa_t *spa)
 	 * Wait for any outstanding async I/O to complete.
 	 */
 	if (spa->spa_async_zio_root != NULL) {
-		(void) zio_wait(spa->spa_async_zio_root);
+		for (i = 0; i < max_ncpus; i++)
+			(void) zio_wait(spa->spa_async_zio_root[i]);
+		kmem_free(spa->spa_async_zio_root, max_ncpus * sizeof (void *));
 		spa->spa_async_zio_root = NULL;
 	}
 
@@ -1386,7 +1388,7 @@ spa_load_spares(spa_t *spa)
 	 * active configuration, then we also mark this vdev as an active spare.
 	 */
 	spa->spa_spares.sav_vdevs = kmem_zalloc(nspares * sizeof (void *),
-	    KM_PUSHPAGE);
+	    KM_SLEEP);
 	for (i = 0; i < spa->spa_spares.sav_count; i++) {
 		VERIFY(spa_config_parse(spa, &vd, spares[i], NULL, 0,
 		    VDEV_ALLOC_SPARE) == 0);
@@ -1434,7 +1436,7 @@ spa_load_spares(spa_t *spa)
 	    DATA_TYPE_NVLIST_ARRAY) == 0);
 
 	spares = kmem_alloc(spa->spa_spares.sav_count * sizeof (void *),
-	    KM_PUSHPAGE);
+	    KM_SLEEP);
 	for (i = 0; i < spa->spa_spares.sav_count; i++)
 		spares[i] = vdev_config_generate(spa,
 		    spa->spa_spares.sav_vdevs[i], B_TRUE, VDEV_CONFIG_SPARE);
@@ -1468,7 +1470,7 @@ spa_load_l2cache(spa_t *spa)
 	if (sav->sav_config != NULL) {
 		VERIFY(nvlist_lookup_nvlist_array(sav->sav_config,
 		    ZPOOL_CONFIG_L2CACHE, &l2cache, &nl2cache) == 0);
-		newvdevs = kmem_alloc(nl2cache * sizeof (void *), KM_PUSHPAGE);
+		newvdevs = kmem_alloc(nl2cache * sizeof (void *), KM_SLEEP);
 	} else {
 		nl2cache = 0;
 		newvdevs = NULL;
@@ -1563,7 +1565,7 @@ spa_load_l2cache(spa_t *spa)
 	VERIFY(nvlist_remove(sav->sav_config, ZPOOL_CONFIG_L2CACHE,
 	    DATA_TYPE_NVLIST_ARRAY) == 0);
 
-	l2cache = kmem_alloc(sav->sav_count * sizeof (void *), KM_PUSHPAGE);
+	l2cache = kmem_alloc(sav->sav_count * sizeof (void *), KM_SLEEP);
 	for (i = 0; i < sav->sav_count; i++)
 		l2cache[i] = vdev_config_generate(spa,
 		    sav->sav_vdevs[i], B_TRUE, VDEV_CONFIG_L2CACHE);
@@ -1592,7 +1594,7 @@ load_nvlist(spa_t *spa, uint64_t obj, nvlist_t **value)
 	nvsize = *(uint64_t *)db->db_data;
 	dmu_buf_rele(db, FTAG);
 
-	packed = kmem_alloc(nvsize, KM_PUSHPAGE | KM_NODEBUG);
+	packed = kmem_alloc(nvsize, KM_SLEEP);
 	error = dmu_read(spa->spa_meta_objset, obj, 0, nvsize, packed,
 	    DMU_READ_PREFETCH);
 	if (error == 0)
@@ -1649,8 +1651,8 @@ spa_config_valid(spa_t *spa, nvlist_t *config)
 		uint64_t idx = 0;
 
 		child = kmem_alloc(rvd->vdev_children * sizeof (nvlist_t **),
-		    KM_PUSHPAGE);
-		VERIFY(nvlist_alloc(&nv, NV_UNIQUE_NAME, KM_PUSHPAGE) == 0);
+		    KM_SLEEP);
+		VERIFY(nvlist_alloc(&nv, NV_UNIQUE_NAME, KM_SLEEP) == 0);
 
 		for (c = 0; c < rvd->vdev_children; c++) {
 			vdev_t *tvd = rvd->vdev_child[c];
@@ -2043,7 +2045,7 @@ spa_try_repair(spa_t *spa, nvlist_t *config)
 	    &glist, &gcount) != 0)
 		return;
 
-	vd = kmem_zalloc(gcount * sizeof (vdev_t *), KM_PUSHPAGE);
+	vd = kmem_zalloc(gcount * sizeof (vdev_t *), KM_SLEEP);
 
 	/* attempt to online all the vdevs & validate */
 	attempt_reopen = B_TRUE;
@@ -2129,7 +2131,7 @@ spa_load(spa_t *spa, spa_load_state_t state, spa_import_type_t type,
 		if (nvlist_lookup_nvlist(config, ZPOOL_CONFIG_SPLIT,
 		    &nvl) == 0) {
 			VERIFY(nvlist_dup(nvl, &spa->spa_config_splitting,
-			    KM_PUSHPAGE) == 0);
+			    KM_SLEEP) == 0);
 		}
 
 		nvlist_free(spa->spa_load_info);
@@ -2173,7 +2175,7 @@ spa_load_impl(spa_t *spa, uint64_t pool_guid, nvlist_t *config,
 	uberblock_t *ub = &spa->spa_uberblock;
 	uint64_t children, config_cache_txg = spa->spa_config_txg;
 	int orig_mode = spa->spa_mode;
-	int parse;
+	int parse, i;
 	uint64_t obj;
 	boolean_t missing_feat_write = B_FALSE;
 
@@ -2197,8 +2199,13 @@ spa_load_impl(spa_t *spa, uint64_t pool_guid, nvlist_t *config,
 	/*
 	 * Create "The Godfather" zio to hold all async IOs
 	 */
-	spa->spa_async_zio_root = zio_root(spa, NULL, NULL,
-	    ZIO_FLAG_CANFAIL | ZIO_FLAG_SPECULATIVE | ZIO_FLAG_GODFATHER);
+	spa->spa_async_zio_root = kmem_alloc(max_ncpus * sizeof (void *),
+	    KM_SLEEP);
+	for (i = 0; i < max_ncpus; i++) {
+		spa->spa_async_zio_root[i] = zio_root(spa, NULL, NULL,
+		    ZIO_FLAG_CANFAIL | ZIO_FLAG_SPECULATIVE |
+		    ZIO_FLAG_GODFATHER);
+	}
 
 	/*
 	 * Parse the configuration into a vdev tree.  We explicitly set the
@@ -3011,7 +3018,7 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 			 */
 			if (config != NULL && spa->spa_config) {
 				VERIFY(nvlist_dup(spa->spa_config, config,
-				    KM_PUSHPAGE) == 0);
+				    KM_SLEEP) == 0);
 				VERIFY(nvlist_add_nvlist(*config,
 				    ZPOOL_CONFIG_LOAD_INFO,
 				    spa->spa_load_info) == 0);
@@ -3435,13 +3442,13 @@ spa_set_aux_vdevs(spa_aux_vdev_t *sav, nvlist_t **devs, int ndevs,
 		    &olddevs, &oldndevs) == 0);
 
 		newdevs = kmem_alloc(sizeof (void *) *
-		    (ndevs + oldndevs), KM_PUSHPAGE);
+		    (ndevs + oldndevs), KM_SLEEP);
 		for (i = 0; i < oldndevs; i++)
 			VERIFY(nvlist_dup(olddevs[i], &newdevs[i],
-			    KM_PUSHPAGE) == 0);
+			    KM_SLEEP) == 0);
 		for (i = 0; i < ndevs; i++)
 			VERIFY(nvlist_dup(devs[i], &newdevs[i + oldndevs],
-			    KM_PUSHPAGE) == 0);
+			    KM_SLEEP) == 0);
 
 		VERIFY(nvlist_remove(sav->sav_config, config,
 		    DATA_TYPE_NVLIST_ARRAY) == 0);
@@ -3456,7 +3463,7 @@ spa_set_aux_vdevs(spa_aux_vdev_t *sav, nvlist_t **devs, int ndevs,
 		 * Generate a new dev list.
 		 */
 		VERIFY(nvlist_alloc(&sav->sav_config, NV_UNIQUE_NAME,
-		    KM_PUSHPAGE) == 0);
+		    KM_SLEEP) == 0);
 		VERIFY(nvlist_add_nvlist_array(sav->sav_config, config,
 		    devs, ndevs) == 0);
 	}
@@ -3503,13 +3510,18 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 	uint64_t version, obj;
 	boolean_t has_features;
 	nvpair_t *elem;
-	int c;
+	int c, i;
+	char *poolname;
+	nvlist_t *nvl;
+
+	if (nvlist_lookup_string(props, "tname", &poolname) != 0)
+		poolname = (char *)pool;
 
 	/*
 	 * If this pool already exists, return failure.
 	 */
 	mutex_enter(&spa_namespace_lock);
-	if (spa_lookup(pool) != NULL) {
+	if (spa_lookup(poolname) != NULL) {
 		mutex_exit(&spa_namespace_lock);
 		return (SET_ERROR(EEXIST));
 	}
@@ -3517,9 +3529,12 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 	/*
 	 * Allocate a new spa_t structure.
 	 */
+	nvl = fnvlist_alloc();
+	fnvlist_add_string(nvl, ZPOOL_CONFIG_POOL_NAME, pool);
 	(void) nvlist_lookup_string(props,
 	    zpool_prop_to_name(ZPOOL_PROP_ALTROOT), &altroot);
-	spa = spa_add(pool, NULL, altroot);
+	spa = spa_add(poolname, nvl, altroot);
+	fnvlist_free(nvl);
 	spa_activate(spa, spa_mode_global);
 
 	if (props && (error = spa_prop_validate(spa, props))) {
@@ -3528,6 +3543,12 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 		mutex_exit(&spa_namespace_lock);
 		return (error);
 	}
+
+	/*
+	 * Temporary pool names should never be written to disk.
+	 */
+	if (poolname != pool)
+		spa->spa_import_flags |= ZFS_IMPORT_TEMP_NAME;
 
 	has_features = B_FALSE;
 	for (elem = nvlist_next_nvpair(props, NULL);
@@ -3550,8 +3571,13 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 	/*
 	 * Create "The Godfather" zio to hold all async IOs
 	 */
-	spa->spa_async_zio_root = zio_root(spa, NULL, NULL,
-	    ZIO_FLAG_CANFAIL | ZIO_FLAG_SPECULATIVE | ZIO_FLAG_GODFATHER);
+	spa->spa_async_zio_root = kmem_alloc(max_ncpus * sizeof (void *),
+	    KM_SLEEP);
+	for (i = 0; i < max_ncpus; i++) {
+		spa->spa_async_zio_root[i] = zio_root(spa, NULL, NULL,
+		    ZIO_FLAG_CANFAIL | ZIO_FLAG_SPECULATIVE |
+		    ZIO_FLAG_GODFATHER);
+	}
 
 	/*
 	 * Create the root vdev.
@@ -3592,7 +3618,7 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 	if (nvlist_lookup_nvlist_array(nvroot, ZPOOL_CONFIG_SPARES,
 	    &spares, &nspares) == 0) {
 		VERIFY(nvlist_alloc(&spa->spa_spares.sav_config, NV_UNIQUE_NAME,
-		    KM_PUSHPAGE) == 0);
+		    KM_SLEEP) == 0);
 		VERIFY(nvlist_add_nvlist_array(spa->spa_spares.sav_config,
 		    ZPOOL_CONFIG_SPARES, spares, nspares) == 0);
 		spa_config_enter(spa, SCL_ALL, FTAG, RW_WRITER);
@@ -3607,7 +3633,7 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 	if (nvlist_lookup_nvlist_array(nvroot, ZPOOL_CONFIG_L2CACHE,
 	    &l2cache, &nl2cache) == 0) {
 		VERIFY(nvlist_alloc(&spa->spa_l2cache.sav_config,
-		    NV_UNIQUE_NAME, KM_PUSHPAGE) == 0);
+		    NV_UNIQUE_NAME, KM_SLEEP) == 0);
 		VERIFY(nvlist_add_nvlist_array(spa->spa_l2cache.sav_config,
 		    ZPOOL_CONFIG_L2CACHE, l2cache, nl2cache) == 0);
 		spa_config_enter(spa, SCL_ALL, FTAG, RW_WRITER);
@@ -3748,7 +3774,7 @@ spa_generate_rootconf(char *devpath, char *devid, uint64_t *guid)
 	/*
 	 * Put this pool's top-level vdevs into a root vdev.
 	 */
-	VERIFY(nvlist_alloc(&nvroot, NV_UNIQUE_NAME, KM_PUSHPAGE) == 0);
+	VERIFY(nvlist_alloc(&nvroot, NV_UNIQUE_NAME, KM_SLEEP) == 0);
 	VERIFY(nvlist_add_string(nvroot, ZPOOL_CONFIG_TYPE,
 	    VDEV_TYPE_ROOT) == 0);
 	VERIFY(nvlist_add_uint64(nvroot, ZPOOL_CONFIG_ID, 0ULL) == 0);
@@ -4056,7 +4082,7 @@ spa_import(char *pool, nvlist_t *config, nvlist_t *props, uint64_t flags)
 			    ZPOOL_CONFIG_SPARES, DATA_TYPE_NVLIST_ARRAY) == 0);
 		else
 			VERIFY(nvlist_alloc(&spa->spa_spares.sav_config,
-			    NV_UNIQUE_NAME, KM_PUSHPAGE) == 0);
+			    NV_UNIQUE_NAME, KM_SLEEP) == 0);
 		VERIFY(nvlist_add_nvlist_array(spa->spa_spares.sav_config,
 		    ZPOOL_CONFIG_SPARES, spares, nspares) == 0);
 		spa_config_enter(spa, SCL_ALL, FTAG, RW_WRITER);
@@ -4071,7 +4097,7 @@ spa_import(char *pool, nvlist_t *config, nvlist_t *props, uint64_t flags)
 			    ZPOOL_CONFIG_L2CACHE, DATA_TYPE_NVLIST_ARRAY) == 0);
 		else
 			VERIFY(nvlist_alloc(&spa->spa_l2cache.sav_config,
-			    NV_UNIQUE_NAME, KM_PUSHPAGE) == 0);
+			    NV_UNIQUE_NAME, KM_SLEEP) == 0);
 		VERIFY(nvlist_add_nvlist_array(spa->spa_l2cache.sav_config,
 		    ZPOOL_CONFIG_L2CACHE, l2cache, nl2cache) == 0);
 		spa_config_enter(spa, SCL_ALL, FTAG, RW_WRITER);
@@ -4162,7 +4188,7 @@ spa_tryimport(nvlist_t *tryconfig)
 		 * pools are bootable.
 		 */
 		if ((!error || error == EEXIST) && spa->spa_bootfs) {
-			char *tmpname = kmem_alloc(MAXPATHLEN, KM_PUSHPAGE);
+			char *tmpname = kmem_alloc(MAXPATHLEN, KM_SLEEP);
 
 			/*
 			 * We have to play games with the name since the
@@ -4173,7 +4199,7 @@ spa_tryimport(nvlist_t *tryconfig)
 				char *cp;
 				char *dsname;
 
-				dsname = kmem_alloc(MAXPATHLEN, KM_PUSHPAGE);
+				dsname = kmem_alloc(MAXPATHLEN, KM_SLEEP);
 
 				cp = strchr(tmpname, '/');
 				if (cp == NULL) {
@@ -4578,7 +4604,7 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing)
 	if (strcmp(oldvd->vdev_path, newvd->vdev_path) == 0) {
 		spa_strfree(oldvd->vdev_path);
 		oldvd->vdev_path = kmem_alloc(strlen(newvd->vdev_path) + 5,
-		    KM_PUSHPAGE);
+		    KM_SLEEP);
 		(void) sprintf(oldvd->vdev_path, "%s/%s",
 		    newvd->vdev_path, "old");
 		if (oldvd->vdev_devid != NULL) {
@@ -4974,8 +5000,8 @@ spa_vdev_split_mirror(spa_t *spa, char *newname, nvlist_t *config,
 	    nvlist_lookup_nvlist(nvl, ZPOOL_CONFIG_L2CACHE, &tmp) == 0)
 		return (spa_vdev_exit(spa, NULL, txg, EINVAL));
 
-	vml = kmem_zalloc(children * sizeof (vdev_t *), KM_PUSHPAGE);
-	glist = kmem_zalloc(children * sizeof (uint64_t), KM_PUSHPAGE);
+	vml = kmem_zalloc(children * sizeof (vdev_t *), KM_SLEEP);
+	glist = kmem_zalloc(children * sizeof (uint64_t), KM_SLEEP);
 
 	/* then, loop over each vdev and validate it */
 	for (c = 0; c < children; c++) {
@@ -5055,7 +5081,7 @@ spa_vdev_split_mirror(spa_t *spa, char *newname, nvlist_t *config,
 	 * Temporarily record the splitting vdevs in the spa config.  This
 	 * will disappear once the config is regenerated.
 	 */
-	VERIFY(nvlist_alloc(&nvl, NV_UNIQUE_NAME, KM_PUSHPAGE) == 0);
+	VERIFY(nvlist_alloc(&nvl, NV_UNIQUE_NAME, KM_SLEEP) == 0);
 	VERIFY(nvlist_add_uint64_array(nvl, ZPOOL_CONFIG_SPLIT_LIST,
 	    glist, children) == 0);
 	kmem_free(glist, children * sizeof (uint64_t));
@@ -5102,7 +5128,7 @@ spa_vdev_split_mirror(spa_t *spa, char *newname, nvlist_t *config,
 	/* if that worked, generate a real config for the new pool */
 	if (newspa->spa_root_vdev != NULL) {
 		VERIFY(nvlist_alloc(&newspa->spa_config_splitting,
-		    NV_UNIQUE_NAME, KM_PUSHPAGE) == 0);
+		    NV_UNIQUE_NAME, KM_SLEEP) == 0);
 		VERIFY(nvlist_add_uint64(newspa->spa_config_splitting,
 		    ZPOOL_CONFIG_SPLIT_GUID, spa_guid(spa)) == 0);
 		spa_config_set(newspa, spa_config_generate(newspa, NULL, -1ULL,
@@ -5213,12 +5239,12 @@ spa_vdev_remove_aux(nvlist_t *config, char *name, nvlist_t **dev, int count,
 	int i, j;
 
 	if (count > 1)
-		newdev = kmem_alloc((count - 1) * sizeof (void *), KM_PUSHPAGE);
+		newdev = kmem_alloc((count - 1) * sizeof (void *), KM_SLEEP);
 
 	for (i = 0, j = 0; i < count; i++) {
 		if (dev[i] == dev_to_remove)
 			continue;
-		VERIFY(nvlist_dup(dev[i], &newdev[j++], KM_PUSHPAGE) == 0);
+		VERIFY(nvlist_dup(dev[i], &newdev[j++], KM_SLEEP) == 0);
 	}
 
 	VERIFY(nvlist_remove(config, name, DATA_TYPE_NVLIST_ARRAY) == 0);
@@ -5892,10 +5918,10 @@ spa_sync_nvlist(spa_t *spa, uint64_t obj, nvlist_t *nv, dmu_tx_t *tx)
 	 * saves us a pre-read to get data we don't actually care about.
 	 */
 	bufsize = P2ROUNDUP((uint64_t)nvsize, SPA_CONFIG_BLOCKSIZE);
-	packed = vmem_alloc(bufsize, KM_PUSHPAGE);
+	packed = vmem_alloc(bufsize, KM_SLEEP);
 
 	VERIFY(nvlist_pack(nv, &packed, &nvsize, NV_ENCODE_XDR,
-	    KM_PUSHPAGE) == 0);
+	    KM_SLEEP) == 0);
 	bzero(packed + nvsize, bufsize - nvsize);
 
 	dmu_write(spa->spa_meta_objset, obj, 0, bufsize, packed, tx);
@@ -5933,11 +5959,11 @@ spa_sync_aux_dev(spa_t *spa, spa_aux_vdev_t *sav, dmu_tx_t *tx,
 		    &sav->sav_object, tx) == 0);
 	}
 
-	VERIFY(nvlist_alloc(&nvroot, NV_UNIQUE_NAME, KM_PUSHPAGE) == 0);
+	VERIFY(nvlist_alloc(&nvroot, NV_UNIQUE_NAME, KM_SLEEP) == 0);
 	if (sav->sav_count == 0) {
 		VERIFY(nvlist_add_nvlist_array(nvroot, config, NULL, 0) == 0);
 	} else {
-		list = kmem_alloc(sav->sav_count*sizeof (void *), KM_PUSHPAGE);
+		list = kmem_alloc(sav->sav_count*sizeof (void *), KM_SLEEP);
 		for (i = 0; i < sav->sav_count; i++)
 			list[i] = vdev_config_generate(spa, sav->sav_vdevs[i],
 			    B_FALSE, VDEV_CONFIG_L2CACHE);
@@ -6191,6 +6217,22 @@ spa_sync_upgrades(spa_t *spa, dmu_tx_t *tx)
 	    spa->spa_uberblock.ub_version >= SPA_VERSION_FEATURES) {
 		spa_feature_create_zap_objects(spa, tx);
 	}
+
+	/*
+	 * LZ4_COMPRESS feature's behaviour was changed to activate_on_enable
+	 * when possibility to use lz4 compression for metadata was added
+	 * Old pools that have this feature enabled must be upgraded to have
+	 * this feature active
+	 */
+	if (spa->spa_uberblock.ub_version >= SPA_VERSION_FEATURES) {
+		boolean_t lz4_en = spa_feature_is_enabled(spa,
+		    SPA_FEATURE_LZ4_COMPRESS);
+		boolean_t lz4_ac = spa_feature_is_active(spa,
+		    SPA_FEATURE_LZ4_COMPRESS);
+
+		if (lz4_en && !lz4_ac)
+			spa_feature_incr(spa, SPA_FEATURE_LZ4_COMPRESS, tx);
+	}
 	rrw_exit(&dp->dp_config_rwlock, FTAG);
 }
 
@@ -6249,7 +6291,7 @@ spa_sync(spa_t *spa, uint64_t txg)
 	spa->spa_sync_starttime = gethrtime();
 	taskq_cancel_id(system_taskq, spa->spa_deadman_tqid);
 	spa->spa_deadman_tqid = taskq_dispatch_delay(system_taskq,
-	    spa_deadman, spa, TQ_PUSHPAGE, ddi_get_lbolt() +
+	    spa_deadman, spa, TQ_SLEEP, ddi_get_lbolt() +
 	    NSEC_TO_TICK(spa->spa_deadman_synctime));
 
 	/*

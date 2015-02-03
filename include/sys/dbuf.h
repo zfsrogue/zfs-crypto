@@ -233,7 +233,7 @@ typedef struct dmu_buf_impl {
 } dmu_buf_impl_t;
 
 /* Note: the dbuf hash table is exposed only for the mdb module */
-#define	DBUF_MUTEXES 256
+#define	DBUF_MUTEXES 8192
 #define	DBUF_HASH_MUTEX(h, idx) (&(h)->hash_mutexes[(idx) & (DBUF_MUTEXES-1)])
 typedef struct dbuf_hash_table {
 	uint64_t hash_table_mask;
@@ -342,13 +342,13 @@ boolean_t dbuf_is_metadata(dmu_buf_impl_t *db);
 	} \
 _NOTE(CONSTCOND) } while (0)
 
-#define	dprintf_dbuf_bp(db, bp, fmt, ...) do {				\
-	if (zfs_flags & ZFS_DEBUG_DPRINTF) {				\
-	char *__blkbuf = kmem_alloc(BP_SPRINTF_LEN, KM_PUSHPAGE);	\
+#define	dprintf_dbuf_bp(db, bp, fmt, ...) do {			\
+	if (zfs_flags & ZFS_DEBUG_DPRINTF) {			\
+	char *__blkbuf = kmem_alloc(BP_SPRINTF_LEN, KM_SLEEP);	\
 	snprintf_blkptr(__blkbuf, BP_SPRINTF_LEN, bp);		\
-	dprintf_dbuf(db, fmt " %s\n", __VA_ARGS__, __blkbuf);		\
-	kmem_free(__blkbuf, BP_SPRINTF_LEN);				\
-	}								\
+	dprintf_dbuf(db, fmt " %s\n", __VA_ARGS__, __blkbuf);	\
+	kmem_free(__blkbuf, BP_SPRINTF_LEN);			\
+	}							\
 _NOTE(CONSTCOND) } while (0)
 
 #define	DBUF_VERIFY(db)	dbuf_verify(db)

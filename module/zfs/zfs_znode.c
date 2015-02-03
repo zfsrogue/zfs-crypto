@@ -182,7 +182,7 @@ zfs_create_share_dir(zfs_sb_t *zsb, dmu_tx_t *tx)
 	vattr.va_uid = crgetuid(kcred);
 	vattr.va_gid = crgetgid(kcred);
 
-	sharezp = kmem_cache_alloc(znode_cache, KM_PUSHPAGE);
+	sharezp = kmem_cache_alloc(znode_cache, KM_SLEEP);
 	sharezp->z_moved = 0;
 	sharezp->z_unlinked = 0;
 	sharezp->z_atime_dirty = 0;
@@ -256,7 +256,7 @@ zfs_inode_alloc(struct super_block *sb, struct inode **ip)
 {
 	znode_t *zp;
 
-	zp = kmem_cache_alloc(znode_cache, KM_PUSHPAGE);
+	zp = kmem_cache_alloc(znode_cache, KM_SLEEP);
 	*ip = ZTOI(zp);
 
 	return (0);
@@ -682,7 +682,7 @@ zfs_mknode(znode_t *dzp, vattr_t *vap, dmu_tx_t *tx, cred_t *cr,
 	 * order for  DMU_OT_ZNODE is critical since it needs to be constructed
 	 * in the old znode_phys_t format.  Don't change this ordering
 	 */
-	sa_attrs = kmem_alloc(sizeof (sa_bulk_attr_t) * ZPL_END, KM_PUSHPAGE);
+	sa_attrs = kmem_alloc(sizeof (sa_bulk_attr_t) * ZPL_END, KM_SLEEP);
 
 	if (obj_type == DMU_OT_ZNODE) {
 		SA_ADD_BULK_ATTR(sa_attrs, cnt, SA_ZPL_ATIME(zsb),
@@ -1440,6 +1440,13 @@ zfs_free_range(znode_t *zp, uint64_t off, uint64_t len)
 		/* offset of last_page */
 		last_page_offset = last_page << PAGE_CACHE_SHIFT;
 
+		/* truncate whole pages */
+		if (last_page_offset > first_page_offset) {
+			truncate_inode_pages_range(ZTOI(zp)->i_mapping,
+			    first_page_offset, last_page_offset - 1);
+		}
+
+		/* truncate sub-page ranges */
 		if (first_page > last_page) {
 			/* entire punched area within a single page */
 			zfs_zero_partial_page(zp, off, len);
@@ -1539,7 +1546,6 @@ zfs_trunc(znode_t *zp, uint64_t end)
 int
 zfs_freesp(znode_t *zp, uint64_t off, uint64_t len, int flag, boolean_t log)
 {
-	struct inode *ip = ZTOI(zp);
 	dmu_tx_t *tx;
 	zfs_sb_t *zsb = ZTOZSB(zp);
 	zilog_t *zilog = zsb->z_log;
@@ -1558,15 +1564,6 @@ zfs_freesp(znode_t *zp, uint64_t off, uint64_t len, int flag, boolean_t log)
 		if (error == 0 && log)
 			goto log;
 		goto out;
-	}
-
-	/*
-	 * Check for any locks in the region to be freed.
-	 */
-	if (ip->i_flock && mandatory_lock(ip)) {
-		uint64_t length = (len ? len : zp->z_size - off);
-		if (!lock_may_write(ip, off, length))
-			return (SET_ERROR(EAGAIN));
 	}
 
 	if (len == 0) {
@@ -1607,31 +1604,10 @@ out:
 	/*
 	 * Truncate the page cache - for file truncate operations, use
 	 * the purpose-built API for truncations.  For punching operations,
-	 * truncate only whole pages within the region; partial pages are
-	 * zeroed under a range lock in zfs_free_range().
+	 * the truncation is handled under a range lock in zfs_free_range.
 	 */
 	if (len == 0)
 		truncate_setsize(ZTOI(zp), off);
-	else if (zp->z_is_mapped) {
-		loff_t first_page, last_page;
-		loff_t first_page_offset, last_page_offset;
-
-		/* first possible full page in hole */
-		first_page = (off + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
-		/* last page of hole */
-		last_page = (off + len) >> PAGE_CACHE_SHIFT;
-
-		/* offset of first_page */
-		first_page_offset = first_page << PAGE_CACHE_SHIFT;
-		/* offset of last_page */
-		last_page_offset = last_page << PAGE_CACHE_SHIFT;
-
-		/* truncate whole pages */
-		if (last_page_offset > first_page_offset) {
-			truncate_inode_pages_range(ZTOI(zp)->i_mapping,
-			    first_page_offset, last_page_offset - 1);
-		}
-	}
 	return (error);
 }
 
@@ -1720,13 +1696,13 @@ zfs_create_fs(objset_t *os, cred_t *cr, nvlist_t *zplprops, dmu_tx_t *tx)
 	vattr.va_uid = crgetuid(cr);
 	vattr.va_gid = crgetgid(cr);
 
-	rootzp = kmem_cache_alloc(znode_cache, KM_PUSHPAGE);
+	rootzp = kmem_cache_alloc(znode_cache, KM_SLEEP);
 	rootzp->z_moved = 0;
 	rootzp->z_unlinked = 0;
 	rootzp->z_atime_dirty = 0;
 	rootzp->z_is_sa = USE_SA(version, os);
 
-	zsb = kmem_zalloc(sizeof (zfs_sb_t), KM_PUSHPAGE | KM_NODEBUG);
+	zsb = kmem_zalloc(sizeof (zfs_sb_t), KM_SLEEP);
 	zsb->z_os = os;
 	zsb->z_parent = zsb;
 	zsb->z_version = version;
@@ -1734,7 +1710,7 @@ zfs_create_fs(objset_t *os, cred_t *cr, nvlist_t *zplprops, dmu_tx_t *tx)
 	zsb->z_use_sa = USE_SA(version, os);
 	zsb->z_norm = norm;
 
-	sb = kmem_zalloc(sizeof (struct super_block), KM_PUSHPAGE);
+	sb = kmem_zalloc(sizeof (struct super_block), KM_SLEEP);
 	sb->s_fs_info = zsb;
 
 	ZTOI(rootzp)->i_sb = sb;

@@ -2,6 +2,7 @@ SUBDIRS = fm fs crypto
 
 COMMON_H = \
 	$(top_srcdir)/include/sys/arc.h \
+	$(top_srcdir)/include/sys/arc_impl.h \
 	$(top_srcdir)/include/sys/avl.h \
 	$(top_srcdir)/include/sys/avl_impl.h \
 	$(top_srcdir)/include/sys/blkptr.h \
@@ -39,11 +40,22 @@ COMMON_H = \
 	$(top_srcdir)/include/sys/rrwlock.h \
 	$(top_srcdir)/include/sys/sa.h \
 	$(top_srcdir)/include/sys/sa_impl.h \
+	$(top_srcdir)/include/sys/sdt.h \
 	$(top_srcdir)/include/sys/spa_boot.h \
 	$(top_srcdir)/include/sys/space_map.h \
 	$(top_srcdir)/include/sys/space_reftree.h \
 	$(top_srcdir)/include/sys/spa.h \
 	$(top_srcdir)/include/sys/spa_impl.h \
+	$(top_srcdir)/include/sys/trace.h \
+	$(top_srcdir)/include/sys/trace_acl.h \
+	$(top_srcdir)/include/sys/trace_arc.h \
+	$(top_srcdir)/include/sys/trace_dbgmsg.h \
+	$(top_srcdir)/include/sys/trace_dbuf.h \
+	$(top_srcdir)/include/sys/trace_dmu.h \
+	$(top_srcdir)/include/sys/trace_dnode.h \
+	$(top_srcdir)/include/sys/trace_txg.h \
+	$(top_srcdir)/include/sys/trace_zil.h \
+	$(top_srcdir)/include/sys/trace_zrlock.h \
 	$(top_srcdir)/include/sys/txg.h \
 	$(top_srcdir)/include/sys/txg_impl.h \
 	$(top_srcdir)/include/sys/u8_textprep_data.h \
@@ -102,6 +114,6 @@ libzfs_HEADERS = $(COMMON_H) $(USER_H)
 endif
 
 if CONFIG_KERNEL
-kerneldir = /usr/src/zfs-$(VERSION)/include/sys
+kerneldir = @prefix@/src/zfs-$(VERSION)/include/sys
 kernel_HEADERS = $(COMMON_H) $(KERNEL_H)
 endif

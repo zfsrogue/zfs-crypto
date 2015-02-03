@@ -366,7 +366,7 @@ dsl_dataset_hold_obj(dsl_pool_t *dp, uint64_t dsobj, void *tag,
 	if (ds == NULL) {
 		dsl_dataset_t *winner = NULL;
 
-		ds = kmem_zalloc(sizeof (dsl_dataset_t), KM_PUSHPAGE);
+		ds = kmem_zalloc(sizeof (dsl_dataset_t), KM_SLEEP);
 		ds->ds_dbuf = dbuf;
 		ds->ds_object = dsobj;
 		ds->ds_phys = dbuf->db_data;
@@ -695,7 +695,13 @@ dsl_dataset_create_sync_dd(dsl_dir_t *dd, dsl_dataset_t *origin,
 		dsphys->ds_uncompressed_bytes =
 		    origin->ds_phys->ds_uncompressed_bytes;
 		dsphys->ds_bp = origin->ds_phys->ds_bp;
-		dsphys->ds_flags |= origin->ds_phys->ds_flags;
+
+		/*
+		 * Inherit flags that describe the dataset's contents
+		 * (INCONSISTENT) or properties (Case Insensitive).
+		 */
+		dsphys->ds_flags |= origin->ds_phys->ds_flags &
+		    (DS_FLAG_INCONSISTENT | DS_FLAG_CI_DATASET);
 
 		dmu_buf_will_dirty(origin->ds_dbuf, tx);
 		origin->ds_phys->ds_num_children++;
@@ -1796,9 +1802,9 @@ dsl_dataset_rollback_check(void *arg, dmu_tx_t *tx)
 	}
 
 	/* must not have any bookmarks after the most recent snapshot */
-	VERIFY0(nvlist_alloc(&proprequest, NV_UNIQUE_NAME, KM_PUSHPAGE));
+	proprequest = fnvlist_alloc();
 	fnvlist_add_boolean(proprequest, zfs_prop_to_name(ZFS_PROP_CREATETXG));
-	VERIFY0(nvlist_alloc(&bookmarks, NV_UNIQUE_NAME, KM_PUSHPAGE));
+	bookmarks = fnvlist_alloc();
 	error = dsl_get_bookmarks_impl(ds, proprequest, bookmarks);
 	fnvlist_free(proprequest);
 	if (error != 0)
@@ -2290,7 +2296,7 @@ snaplist_make(dsl_pool_t *dp,
 		if (first_obj == 0)
 			first_obj = ds->ds_dir->dd_phys->dd_origin_obj;
 
-		snap = kmem_alloc(sizeof (*snap), KM_PUSHPAGE);
+		snap = kmem_alloc(sizeof (*snap), KM_SLEEP);
 		snap->ds = ds;
 		list_insert_tail(l, snap);
 		obj = ds->ds_phys->ds_prev_snap_obj;

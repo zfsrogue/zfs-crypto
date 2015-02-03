@@ -134,7 +134,7 @@ bptree_add(objset_t *os, uint64_t obj, blkptr_t *bp, uint64_t birth_txg,
 	VERIFY3U(0, ==, dmu_bonus_hold(os, obj, FTAG, &db));
 	bt = db->db_data;
 
-	bte = kmem_zalloc(sizeof (*bte), KM_PUSHPAGE);
+	bte = kmem_zalloc(sizeof (*bte), KM_SLEEP);
 	bte->be_birth_txg = birth_txg;
 	bte->be_bp = *bp;
 	dmu_write(os, obj, bt->bt_end * sizeof (*bte), sizeof (*bte), bte, tx);
@@ -221,7 +221,7 @@ bptree_iterate(objset_t *os, uint64_t obj, boolean_t free, bptree_itor_t func,
 
 		if (zfs_free_leak_on_eio)
 			flags |= TRAVERSE_HARD;
-		zfs_dbgmsg("bptree index %d: traversing from min_txg=%lld "
+		zfs_dbgmsg("bptree index %lld: traversing from min_txg=%lld "
 		    "bookmark %lld/%lld/%lld/%lld",
 		    i, (longlong_t)bte.be_birth_txg,
 		    (longlong_t)bte.be_zb.zb_objset,

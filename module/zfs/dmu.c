@@ -22,6 +22,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2011, 2014 by Delphix. All rights reserved.
  * Copyright (c) 2013 by Saso Kiselkov. All rights reserved.
+ * Copyright (c) 2014, Nexenta Systems, Inc. All rights reserved.
  */
 
 #include <sys/dmu.h>
@@ -43,6 +44,7 @@
 #include <sys/zio_checksum.h>
 #include <sys/zio_compress.h>
 #include <sys/sa.h>
+#include <sys/zfeature.h>
 #ifdef _KERNEL
 #include <sys/vmsystm.h>
 #include <sys/zfs_znode.h>
@@ -430,8 +432,7 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 		}
 		nblks = 1;
 	}
-	dbp = kmem_zalloc(sizeof (dmu_buf_t *) * nblks,
-	    KM_PUSHPAGE | KM_NODEBUG);
+	dbp = kmem_zalloc(sizeof (dmu_buf_t *) * nblks, KM_SLEEP);
 
 	zio = zio_root(dn->dn_objset->os_spa, NULL, NULL, ZIO_FLAG_CANFAIL);
 	blkid = dbuf_whichblock(dn, offset);
@@ -829,7 +830,7 @@ dmu_write(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	if (size == 0)
 		return;
 
-	VERIFY(0 == dmu_buf_hold_array(os, object, offset, size,
+	VERIFY0(dmu_buf_hold_array(os, object, offset, size,
 	    FALSE, FTAG, &numbufs, &dbp));
 
 	for (i = 0; i < numbufs; i++) {
@@ -938,11 +939,11 @@ dmu_xuio_init(xuio_t *xuio, int nblk)
 	uio_t *uio = &xuio->xu_uio;
 
 	uio->uio_iovcnt = nblk;
-	uio->uio_iov = kmem_zalloc(nblk * sizeof (iovec_t), KM_PUSHPAGE);
+	uio->uio_iov = kmem_zalloc(nblk * sizeof (iovec_t), KM_SLEEP);
 
-	priv = kmem_zalloc(sizeof (dmu_xuio_t), KM_PUSHPAGE);
+	priv = kmem_zalloc(sizeof (dmu_xuio_t), KM_SLEEP);
 	priv->cnt = nblk;
-	priv->bufs = kmem_zalloc(nblk * sizeof (arc_buf_t *), KM_PUSHPAGE);
+	priv->bufs = kmem_zalloc(nblk * sizeof (arc_buf_t *), KM_SLEEP);
 	priv->iovp = uio->uio_iov;
 	XUIO_XUZC_PRIV(xuio) = priv;
 
@@ -1400,7 +1401,14 @@ dmu_assign_arcbuf(dmu_buf_t *handle, uint64_t offset, arc_buf_t *buf,
 	rw_exit(&dn->dn_struct_rwlock);
 	DB_DNODE_EXIT(dbuf);
 
-	if (offset == db->db.db_offset && blksz == db->db.db_size) {
+	/*
+	 * We can only assign if the offset is aligned, the arc buf is the
+	 * same size as the dbuf, and the dbuf is not metadata.  It
+	 * can't be metadata because the loaned arc buf comes from the
+	 * user-data kmem area.
+	 */
+	if (offset == db->db.db_offset && blksz == db->db.db_size &&
+	    DBUF_GET_BUFC_TYPE(db) == ARC_BUFC_DATA) {
 		dbuf_assign_arcbuf(db, buf, tx);
 		dbuf_rele(db, FTAG);
 	} else {
@@ -1537,7 +1545,7 @@ dmu_sync_late_arrival(zio_t *pio, objset_t *os, dmu_sync_cb_t *done, zgd_t *zgd,
 		return (SET_ERROR(EIO));
 	}
 
-	dsa = kmem_alloc(sizeof (dmu_sync_arg_t), KM_PUSHPAGE);
+	dsa = kmem_alloc(sizeof (dmu_sync_arg_t), KM_SLEEP);
 	dsa->dsa_dr = NULL;
 	dsa->dsa_done = done;
 	dsa->dsa_zgd = zgd;
@@ -1677,7 +1685,7 @@ dmu_sync(zio_t *pio, uint64_t txg, dmu_sync_cb_t *done, zgd_t *zgd)
 	dr->dt.dl.dr_override_state = DR_IN_DMU_SYNC;
 	mutex_exit(&db->db_mtx);
 
-	dsa = kmem_alloc(sizeof (dmu_sync_arg_t), KM_PUSHPAGE);
+	dsa = kmem_alloc(sizeof (dmu_sync_arg_t), KM_SLEEP);
 	dsa->dsa_dr = dr;
 	dsa->dsa_done = done;
 	dsa->dsa_zgd = zgd;
@@ -1781,8 +1789,16 @@ dmu_write_policy(objset_t *os, dnode_t *dn, int level, int wp, zio_prop_t *zp)
 		 * XXX -- we should design a compression algorithm
 		 * that specializes in arrays of bps.
 		 */
-		compress = zfs_mdcomp_disable ? ZIO_COMPRESS_EMPTY :
-		    ZIO_COMPRESS_LZJB;
+		boolean_t lz4_ac = spa_feature_is_active(os->os_spa,
+		    SPA_FEATURE_LZ4_COMPRESS);
+
+		if (zfs_mdcomp_disable) {
+			compress = ZIO_COMPRESS_EMPTY;
+		} else if (lz4_ac) {
+			compress = ZIO_COMPRESS_LZ4;
+		} else {
+			compress = ZIO_COMPRESS_LZJB;
+		}
 
 		/*
 		 * Metadata always gets checksummed.  If the data
@@ -1907,6 +1923,7 @@ __dmu_object_info_from_dnode(dnode_t *dn, dmu_object_info_t *doi)
 	doi->doi_indirection = dn->dn_nlevels;
 	doi->doi_checksum = dn->dn_checksum;
 	doi->doi_compress = dn->dn_compress;
+	doi->doi_nblkptr = dn->dn_nblkptr;
 	doi->doi_physical_blocks_512 = (DN_USED_BYTES(dnp) + 256) >> 9;
 	doi->doi_max_offset = (dn->dn_maxblkid + 1) * dn->dn_datablksz;
 	doi->doi_fill_count = 0;

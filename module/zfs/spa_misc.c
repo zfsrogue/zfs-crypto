@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2013 by Delphix. All rights reserved.
+ * Copyright (c) 2011, 2014 by Delphix. All rights reserved.
  * Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
  */
 
@@ -238,6 +238,53 @@ static avl_tree_t spa_l2cache_avl;
 kmem_cache_t *spa_buffer_pool;
 int spa_mode_global;
 
+#ifdef ZFS_DEBUG
+/* Everything except dprintf and spa is on by default in debug builds */
+int zfs_flags = ~(ZFS_DEBUG_DPRINTF | ZFS_DEBUG_SPA);
+#else
+int zfs_flags = 0;
+#endif
+
+/*
+ * zfs_recover can be set to nonzero to attempt to recover from
+ * otherwise-fatal errors, typically caused by on-disk corruption.  When
+ * set, calls to zfs_panic_recover() will turn into warning messages.
+ * This should only be used as a last resort, as it typically results
+ * in leaked space, or worse.
+ */
+int zfs_recover = B_FALSE;
+
+/*
+ * If destroy encounters an EIO while reading metadata (e.g. indirect
+ * blocks), space referenced by the missing metadata can not be freed.
+ * Normally this causes the background destroy to become "stalled", as
+ * it is unable to make forward progress.  While in this stalled state,
+ * all remaining space to free from the error-encountering filesystem is
+ * "temporarily leaked".  Set this flag to cause it to ignore the EIO,
+ * permanently leak the space from indirect blocks that can not be read,
+ * and continue to free everything else that it can.
+ *
+ * The default, "stalling" behavior is useful if the storage partially
+ * fails (i.e. some but not all i/os fail), and then later recovers.  In
+ * this case, we will be able to continue pool operations while it is
+ * partially failed, and when it recovers, we can continue to free the
+ * space, with no leaks.  However, note that this case is actually
+ * fairly rare.
+ *
+ * Typically pools either (a) fail completely (but perhaps temporarily,
+ * e.g. a top-level vdev going offline), or (b) have localized,
+ * permanent errors (e.g. disk returns the wrong data due to bit flip or
+ * firmware bug).  In case (a), this setting does not matter because the
+ * pool will be suspended and the sync thread will not be able to make
+ * forward progress regardless.  In case (b), because the error is
+ * permanent, the best we can do is leak the minimum amount of space,
+ * which is what setting this flag will do.  Therefore, it is reasonable
+ * for this flag to normally be set, but we chose the more conservative
+ * approach of not setting it, so that there is no possibility of
+ * leaking space in the "partial temporary" failure case.
+ */
+int zfs_free_leak_on_eio = B_FALSE;
+
 /*
  * Expiration time in milliseconds. This value has two meanings. First it is
  * used to determine when the spa_deadman() logic should fire. By default the
@@ -454,7 +501,7 @@ spa_deadman(void *arg)
 		vdev_deadman(spa->spa_root_vdev);
 
 	spa->spa_deadman_tqid = taskq_dispatch_delay(system_taskq,
-	    spa_deadman, spa, TQ_PUSHPAGE, ddi_get_lbolt() +
+	    spa_deadman, spa, KM_SLEEP, ddi_get_lbolt() +
 	    NSEC_TO_TICK(spa->spa_deadman_synctime));
 }
 
@@ -473,7 +520,7 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 
 	ASSERT(MUTEX_HELD(&spa_namespace_lock));
 
-	spa = kmem_zalloc(sizeof (spa_t), KM_PUSHPAGE | KM_NODEBUG);
+	spa = kmem_zalloc(sizeof (spa_t), KM_SLEEP);
 
 	mutex_init(&spa->spa_async_lock, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&spa->spa_errlist_lock, NULL, MUTEX_DEFAULT, NULL);
@@ -523,12 +570,12 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 	list_create(&spa->spa_config_list, sizeof (spa_config_dirent_t),
 	    offsetof(spa_config_dirent_t, scd_link));
 
-	dp = kmem_zalloc(sizeof (spa_config_dirent_t), KM_PUSHPAGE);
+	dp = kmem_zalloc(sizeof (spa_config_dirent_t), KM_SLEEP);
 	dp->scd_path = altroot ? NULL : spa_strdup(spa_config_path);
 	list_insert_head(&spa->spa_config_list, dp);
 
 	VERIFY(nvlist_alloc(&spa->spa_load_info, NV_UNIQUE_NAME,
-	    KM_PUSHPAGE) == 0);
+	    KM_SLEEP) == 0);
 
 	if (config != NULL) {
 		nvlist_t *features;
@@ -544,7 +591,7 @@ spa_add(const char *name, nvlist_t *config, const char *altroot)
 
 	if (spa->spa_label_features == NULL) {
 		VERIFY(nvlist_alloc(&spa->spa_label_features, NV_UNIQUE_NAME,
-		    KM_PUSHPAGE) == 0);
+		    KM_SLEEP) == 0);
 	}
 
 	spa->spa_debug = ((zfs_flags & ZFS_DEBUG_SPA) != 0);
@@ -725,7 +772,7 @@ spa_aux_add(vdev_t *vd, avl_tree_t *avl)
 	if ((aux = avl_find(avl, &search, &where)) != NULL) {
 		aux->aux_count++;
 	} else {
-		aux = kmem_zalloc(sizeof (spa_aux_t), KM_PUSHPAGE);
+		aux = kmem_zalloc(sizeof (spa_aux_t), KM_SLEEP);
 		aux->aux_guid = vd->vdev_guid;
 		aux->aux_count = 1;
 		avl_insert(avl, aux, where);
@@ -1233,7 +1280,7 @@ spa_strdup(const char *s)
 	char *new;
 
 	len = strlen(s);
-	new = kmem_alloc(len + 1, KM_PUSHPAGE);
+	new = kmem_alloc(len + 1, KM_SLEEP);
 	bcopy(s, new, len);
 	new[len] = '\0';
 
@@ -1317,6 +1364,16 @@ spa_freeze(spa_t *spa)
 	spa_config_exit(spa, SCL_ALL, FTAG);
 	if (freeze_txg != 0)
 		txg_wait_synced(spa_get_dsl(spa), freeze_txg);
+}
+
+void
+zfs_panic_recover(const char *fmt, ...)
+{
+	va_list adx;
+
+	va_start(adx, fmt);
+	vcmn_err(zfs_recover ? CE_WARN : CE_PANIC, fmt, adx);
+	va_end(adx);
 }
 
 /*
@@ -1756,6 +1813,16 @@ spa_writeable(spa_t *spa)
 	return (!!(spa->spa_mode & FWRITE));
 }
 
+/*
+ * Returns true if there is a pending sync task in any of the current
+ * syncing txg, the current quiescing txg, or the current open txg.
+ */
+boolean_t
+spa_has_pending_synctask(spa_t *spa)
+{
+	return (!txg_all_lists_empty(&spa->spa_dsl_pool->dp_sync_tasks));
+}
+
 int
 spa_mode(spa_t *spa)
 {
@@ -1912,6 +1979,16 @@ EXPORT_SYMBOL(spa_writeable);
 EXPORT_SYMBOL(spa_mode);
 
 EXPORT_SYMBOL(spa_namespace_lock);
+
+module_param(zfs_flags, uint, 0644);
+MODULE_PARM_DESC(zfs_flags, "Set additional debugging flags");
+
+module_param(zfs_recover, int, 0644);
+MODULE_PARM_DESC(zfs_recover, "Set to attempt to recover from fatal errors");
+
+module_param(zfs_free_leak_on_eio, int, 0644);
+MODULE_PARM_DESC(zfs_free_leak_on_eio,
+	"Set to ignore IO errors during free and permanently leak the space");
 
 module_param(zfs_deadman_synctime_ms, ulong, 0644);
 MODULE_PARM_DESC(zfs_deadman_synctime_ms, "Expiration time in milliseconds");

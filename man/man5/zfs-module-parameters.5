@@ -182,6 +182,17 @@ Use \fB1\fR for yes (default) and \fB0\fR for no.
 .sp
 .ne 2
 .na
+\fBmetaslabs_per_vdev\fR (int)
+.ad
+.RS 12n
+When a vdev is added, it will be divided into approximately (but no more than) this number of metaslabs.
+.sp
+Default value: \fB200\fR.
+.RE
+
+.sp
+.ne 2
+.na
 \fBmetaslab_preload_enabled\fR (int)
 .ad
 .RS 12n
@@ -612,6 +623,17 @@ Default value: \fB67,108,864\fR.
 .sp
 .ne 2
 .na
+\fBzfs_free_max_blocks\fR (ulong)
+.ad
+.RS 12n
+Maximum number of blocks freed in a single txg.
+.sp
+Default value: \fB100,000\fR.
+.RE
+
+.sp
+.ne 2
+.na
 \fBzfs_vdev_async_read_max_active\fR (int)
 .ad
 .RS 12n
@@ -800,9 +822,45 @@ Default value: \fB300\fR.
 \fBzfs_flags\fR (int)
 .ad
 .RS 12n
-Set additional debugging flags
+Set additional debugging flags. The following flags may be bitwise-or'd
+together.
 .sp
-Default value: \fB1\fR.
+.TS
+box;
+rB lB
+lB lB
+r l.
+Value	Symbolic Name
+	Description
+_
+1	ZFS_DEBUG_DPRINTF
+	Enable dprintf entries in the debug log.
+_
+2	ZFS_DEBUG_DBUF_VERIFY *
+	Enable extra dbuf verifications.
+_
+4	ZFS_DEBUG_DNODE_VERIFY *
+	Enable extra dnode verifications.
+_
+8	ZFS_DEBUG_SNAPNAMES
+	Enable snapshot name verification.
+_
+16	ZFS_DEBUG_MODIFY
+	Check for illegally modified ARC buffers.
+_
+32	ZFS_DEBUG_SPA
+	Enable spa_dbgmsg entries in the debug log.
+_
+64	ZFS_DEBUG_ZIO_FREE
+	Enable verification of block frees.
+_
+128	ZFS_DEBUG_HISTOGRAM_VERIFY
+	Enable extra spacemap histogram verifications.
+.TE
+.sp
+* Requires debug build.
+.sp
+Default value: \fB0\fR.
 .RE
 
 .sp

@@ -57,7 +57,6 @@ const char *zio_type_name[ZIO_TYPES] = {
  */
 kmem_cache_t *zio_cache;
 kmem_cache_t *zio_link_cache;
-kmem_cache_t *zio_vdev_cache;
 kmem_cache_t *zio_buf_cache[SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT];
 kmem_cache_t *zio_data_buf_cache[SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT];
 int zio_bulk_flags = 0;
@@ -134,8 +133,6 @@ zio_init(void)
 	    zio_cons, zio_dest, NULL, NULL, NULL, 0);
 	zio_link_cache = kmem_cache_create("zio_link_cache",
 	    sizeof (zio_link_t), 0, NULL, NULL, NULL, NULL, NULL, 0);
-	zio_vdev_cache = kmem_cache_create("zio_vdev_cache", sizeof (vdev_io_t),
-	    PAGESIZE, NULL, NULL, NULL, NULL, NULL, 0);
 
 	/*
 	 * For small buffers, we want a cache for each multiple of
@@ -220,7 +217,6 @@ zio_fini(void)
 		zio_data_buf_cache[c] = NULL;
 	}
 
-	kmem_cache_destroy(zio_vdev_cache);
 	kmem_cache_destroy(zio_link_cache);
 	kmem_cache_destroy(zio_cache);
 
@@ -248,7 +244,7 @@ zio_buf_alloc(size_t size)
 
 	ASSERT3U(c, <, SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT);
 
-	return (kmem_cache_alloc(zio_buf_cache[c], KM_PUSHPAGE | KM_NODEBUG));
+	return (kmem_cache_alloc(zio_buf_cache[c], KM_PUSHPAGE));
 }
 
 /*
@@ -264,8 +260,7 @@ zio_data_buf_alloc(size_t size)
 
 	ASSERT(c < SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT);
 
-	return (kmem_cache_alloc(zio_data_buf_cache[c],
-	    KM_PUSHPAGE | KM_NODEBUG));
+	return (kmem_cache_alloc(zio_data_buf_cache[c], KM_PUSHPAGE));
 }
 
 void
@@ -289,24 +284,6 @@ zio_data_buf_free(void *buf, size_t size)
 }
 
 /*
- * Dedicated I/O buffers to ensure that memory fragmentation never prevents
- * or significantly delays the issuing of a zio.   These buffers are used
- * to aggregate I/O and could be used for raidz stripes.
- */
-void *
-zio_vdev_alloc(void)
-{
-	return (kmem_cache_alloc(zio_vdev_cache, KM_PUSHPAGE));
-}
-
-void
-zio_vdev_free(void *buf)
-{
-	kmem_cache_free(zio_vdev_cache, buf);
-
-}
-
-/*
  * ==========================================================================
  * Push and pop I/O transform buffers
  * ==========================================================================
@@ -315,7 +292,7 @@ static void
 zio_push_transform(zio_t *zio, void *data, uint64_t size, uint64_t bufsize,
         zio_transform_func_t *transform, void *arg)
 {
-	zio_transform_t *zt = kmem_alloc(sizeof (zio_transform_t), KM_PUSHPAGE);
+	zio_transform_t *zt = kmem_alloc(sizeof (zio_transform_t), KM_SLEEP);
 
 	zt->zt_orig_data = zio->io_data;
 	zt->zt_orig_size = zio->io_size;
@@ -478,7 +455,7 @@ zio_unique_parent(zio_t *cio)
 void
 zio_add_child(zio_t *pio, zio_t *cio)
 {
-	zio_link_t *zl = kmem_cache_alloc(zio_link_cache, KM_PUSHPAGE);
+	zio_link_t *zl = kmem_cache_alloc(zio_link_cache, KM_SLEEP);
 	int w;
 
 	/*
@@ -602,7 +579,7 @@ zio_create(zio_t *pio, spa_t *spa, uint64_t txg, const blkptr_t *bp,
 	ASSERT(!bp || !(flags & ZIO_FLAG_CONFIG_WRITER));
 	ASSERT(vd || stage == ZIO_STAGE_OPEN);
 
-	zio = kmem_cache_alloc(zio_cache, KM_PUSHPAGE);
+	zio = kmem_cache_alloc(zio_cache, KM_SLEEP);
 
 	if (vd != NULL)
 		zio->io_child_type = ZIO_CHILD_VDEV;
@@ -946,8 +923,8 @@ zio_read_phys(zio_t *pio, vdev_t *vd, uint64_t offset, uint64_t size,
 	ASSERT3U(offset + size, <=, vd->vdev_psize);
 
 	zio = zio_create(pio, vd->vdev_spa, 0, NULL, data, size, done, private,
-	    ZIO_TYPE_READ, priority, flags, vd, offset, NULL,
-	    ZIO_STAGE_OPEN, ZIO_READ_PHYS_PIPELINE);
+	    ZIO_TYPE_READ, priority, flags | ZIO_FLAG_PHYSICAL, vd, offset,
+	    NULL, ZIO_STAGE_OPEN, ZIO_READ_PHYS_PIPELINE);
 
 	zio->io_prop.zp_checksum = checksum;
 
@@ -967,8 +944,8 @@ zio_write_phys(zio_t *pio, vdev_t *vd, uint64_t offset, uint64_t size,
 	ASSERT3U(offset + size, <=, vd->vdev_psize);
 
 	zio = zio_create(pio, vd->vdev_spa, 0, NULL, data, size, done, private,
-	    ZIO_TYPE_WRITE, priority, flags, vd, offset, NULL,
-	    ZIO_STAGE_OPEN, ZIO_WRITE_PHYS_PIPELINE);
+	    ZIO_TYPE_WRITE, priority, flags | ZIO_FLAG_PHYSICAL, vd, offset,
+	    NULL, ZIO_STAGE_OPEN, ZIO_WRITE_PHYS_PIPELINE);
 
 	zio->io_prop.zp_checksum = checksum;
 
@@ -1536,7 +1513,11 @@ static zio_pipe_stage_t *zio_pipeline[];
 void
 zio_execute(zio_t *zio)
 {
+	fstrans_cookie_t cookie;
+
+	cookie = spl_fstrans_mark();
 	__zio_execute(zio);
+	spl_fstrans_unmark(cookie);
 }
 
 __attribute__((always_inline))
@@ -1642,14 +1623,19 @@ zio_nowait(zio_t *zio)
 
 	if (zio->io_child_type == ZIO_CHILD_LOGICAL &&
 	    zio_unique_parent(zio) == NULL) {
+		zio_t *pio;
+
 		/*
 		 * This is a logical async I/O with no parent to wait for it.
 		 * We add it to the spa_async_root_zio "Godfather" I/O which
 		 * will ensure they complete prior to unloading the pool.
 		 */
 		spa_t *spa = zio->io_spa;
+		kpreempt_disable();
+		pio = spa->spa_async_zio_root[CPU_SEQID];
+		kpreempt_enable();
 
-		zio_add_child(spa->spa_async_zio_root, zio);
+		zio_add_child(pio, zio);
 	}
 
 	__zio_execute(zio);
@@ -1924,7 +1910,7 @@ zio_gang_node_alloc(zio_gang_node_t **gnpp)
 
 	ASSERT(*gnpp == NULL);
 
-	gn = kmem_zalloc(sizeof (*gn), KM_PUSHPAGE);
+	gn = kmem_zalloc(sizeof (*gn), KM_SLEEP);
 	gn->gn_gbh = zio_buf_alloc(SPA_GANGBLOCKSIZE);
 	*gnpp = gn;
 
@@ -2839,7 +2825,9 @@ zio_vdev_io_start(zio_t *zio)
 
 	align = 1ULL << vd->vdev_top->vdev_ashift;
 
-	if (P2PHASE(zio->io_size, align) != 0) {
+	if (!(zio->io_flags & ZIO_FLAG_PHYSICAL) &&
+	    P2PHASE(zio->io_size, align) != 0) {
+		/* Transform logical writes to be a full physical block size. */
 		uint64_t asize = P2ROUNDUP(zio->io_size, align);
 		char *abuf = zio_buf_alloc(asize);
 		ASSERT(vd == vd->vdev_top);
@@ -2850,8 +2838,22 @@ zio_vdev_io_start(zio_t *zio)
 		zio_push_transform(zio, abuf, asize, asize, zio_subblock, NULL);
 	}
 
-	ASSERT(P2PHASE(zio->io_offset, align) == 0);
-	ASSERT(P2PHASE(zio->io_size, align) == 0);
+	/*
+	 * If this is not a physical io, make sure that it is properly aligned
+	 * before proceeding.
+	 */
+	if (!(zio->io_flags & ZIO_FLAG_PHYSICAL)) {
+		ASSERT0(P2PHASE(zio->io_offset, align));
+		ASSERT0(P2PHASE(zio->io_size, align));
+	} else {
+		/*
+		 * For physical writes, we allow 512b aligned writes and assume
+		 * the device will perform a read-modify-write as necessary.
+		 */
+		ASSERT0(P2PHASE(zio->io_offset, SPA_MINBLOCKSIZE));
+		ASSERT0(P2PHASE(zio->io_size, SPA_MINBLOCKSIZE));
+	}
+
 	VERIFY(zio->io_type != ZIO_TYPE_WRITE || spa_writeable(spa));
 
 	/*
@@ -3593,6 +3595,10 @@ EXPORT_SYMBOL(zio_handle_fault_injection);
 EXPORT_SYMBOL(zio_handle_device_injection);
 EXPORT_SYMBOL(zio_handle_label_injection);
 EXPORT_SYMBOL(zio_type_name);
+EXPORT_SYMBOL(zio_buf_alloc);
+EXPORT_SYMBOL(zio_data_buf_alloc);
+EXPORT_SYMBOL(zio_buf_free);
+EXPORT_SYMBOL(zio_data_buf_free);
 
 module_param(zio_bulk_flags, int, 0644);
 MODULE_PARM_DESC(zio_bulk_flags, "Additional flags to pass to bulk buffers");
