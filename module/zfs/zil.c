@@ -203,16 +203,16 @@ static int
 zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
     char **end)
 {
-	enum zio_flag zio_flags = ZIO_FLAG_CANFAIL;
-	uint32_t aflags = ARC_WAIT;
-	arc_buf_t *abuf = NULL;
-	zbookmark_phys_t zb;
-	int error;
-    char *data;
-    uint64_t size;
-    boolean_t raw;
+  enum zio_flag zio_flags = ZIO_FLAG_CANFAIL;
+  uint32_t aflags = ARC_WAIT;
+  arc_buf_t *abuf = NULL;
+  zbookmark_phys_t zb;
+  int error;
+  char *data;
+  uint64_t size;
+  boolean_t raw;
 
-	if (zilog->zl_header->zh_claim_txg == 0)
+	if (zilog->zl_replay_time == 0)
 		zio_flags |= ZIO_FLAG_SPECULATIVE | ZIO_FLAG_SCRUB;
 
 	if (!(zilog->zl_header->zh_flags & ZIL_CLAIM_LR_SEQ_VALID))
@@ -224,25 +224,21 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 	/*
 	 * If we haven't started replay then crypto reads are raw and uncached
 	 */
-	raw = BP_IS_ENCRYPTED(bp) && (zilog->zl_header->zh_claim_txg == 0);
-	if (raw) {
-		zio_flags |= ZIO_FLAG_RAW;
-		size = BP_GET_PSIZE(bp);
-		data = zio_data_buf_alloc(size);
-		//error = zio_wait(zio_read(NULL, zilog->zl_spa, bp, data, size,
-        //           NULL, NULL, ZIO_PRIORITY_SYNC_READ, zio_flags, &zb));
-        error = dsl_read_nolock(NULL, zilog->zl_spa, bp, arc_getbuf_func, data,
-                                ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
-
-	} else {
-		error = arc_read(NULL, zilog->zl_spa, bp, arc_getbuf_func,
-                         &abuf, ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
-		if (error)
-			return (error);
-		size = BP_GET_LSIZE(bp);
-		data = abuf->b_data;
-	}
-
+        raw = BP_IS_ENCRYPTED(bp) && (zilog->zl_replay_time == 0);
+        if (raw) {
+	  zio_flags |= ZIO_FLAG_RAW;
+	  size = BP_GET_PSIZE(bp);
+	  data = zio_data_buf_alloc(size);
+	  error = zio_wait(zio_read(NULL, zilog->zl_spa, bp, data, size,
+	      NULL, NULL, ZIO_PRIORITY_SYNC_READ, zio_flags, &zb));
+        } else {
+	  error = arc_read(NULL, zilog->zl_spa, bp, arc_getbuf_func,
+		   &abuf, ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
+	  if (error)
+	    return (error);
+	  size = BP_GET_LSIZE(bp);
+	  data = abuf->b_data;
+        }
 
 	if (error == 0) {
 		zio_cksum_t cksum = bp->blk_cksum;
@@ -285,13 +281,12 @@ zil_read_log_block(zilog_t *zilog, const blkptr_t *bp, blkptr_t *nbp, void *dst,
 			}
 		}
 
-		VERIFY(arc_buf_remove_ref(abuf, &abuf));
 	}
 
 	if (raw)
 		zio_data_buf_free(data, size);
-	//else
-		//arc_free_ref(abuf);
+	else
+	  arc_buf_remove_ref(abuf, &abuf);
 
 	return (error);
 }
@@ -315,7 +310,7 @@ zil_read_log_data(zilog_t *zilog, const lr_write_t *lr, void *wbuf)
 		return (0);
 	}
 
-	if (zilog->zl_header->zh_claim_txg == 0)
+	if (zilog->zl_replay_time == 0)
 		zio_flags |= ZIO_FLAG_SPECULATIVE | ZIO_FLAG_SCRUB;
 
 	SET_BOOKMARK(&zb, dmu_objset_id(zilog->zl_os), lr->lr_foid,
@@ -327,33 +322,29 @@ zil_read_log_data(zilog_t *zilog, const lr_write_t *lr, void *wbuf)
 	 * because we need the key and don't want to put the untranslated
 	 * blocks in the ARC.
 	 */
-	if (BP_IS_ENCRYPTED(bp) && (zilog->zl_header->zh_claim_txg == 0)) {
-		char *data;
-		uint64_t size;
+        if (BP_IS_ENCRYPTED(bp) && (zilog->zl_replay_time == 0)) {
+	  char *data;
+	  uint64_t size;
 
-		zio_flags |= ZIO_FLAG_RAW;
-		size = BP_GET_PSIZE(bp);
-		data = zio_data_buf_alloc(size);
-        error = dsl_read_nolock(NULL, zilog->zl_spa, bp, arc_getbuf_func, data,
-                                ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
-		//error = zio_wait(zio_read(NULL, zilog->zl_spa, bp, data, size,
-        //   NULL, NULL, ZIO_PRIORITY_SYNC_READ, zio_flags, &zb));
-		ASSERT(wbuf == NULL);
-		zio_data_buf_free(data, size);
+	  zio_flags |= ZIO_FLAG_RAW;
+	  size = BP_GET_PSIZE(bp);
+	  data = zio_data_buf_alloc(size);
+	  error = zio_wait(zio_read(NULL, zilog->zl_spa, bp, data, size,
+				    NULL, NULL, ZIO_PRIORITY_SYNC_READ, zio_flags, &zb));
+	  ASSERT(wbuf == NULL);
+	  zio_data_buf_free(data, size);
+        } else {
+	  arc_buf_t *abuf = NULL;
 
-	} else {
-		arc_buf_t *abuf = NULL;
-
-		error = arc_read(NULL, zilog->zl_spa, bp, arc_getbuf_func,
-		    &abuf, ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags, &zb);
-		if (error)
-			return (error);
-		if (wbuf != NULL)
-			bcopy(abuf->b_data, wbuf, arc_buf_size(abuf));
-
-
-		//arc_free_ref(abuf);
-	}
+	  error = arc_read(NULL, zilog->zl_spa, bp, arc_getbuf_func,
+			   &abuf, ZIO_PRIORITY_SYNC_READ, zio_flags, &aflags,
+			   &zb);
+	  if (error)
+	    return (error);
+	  if (wbuf != NULL)
+	    bcopy(abuf->b_data, wbuf, arc_buf_size(abuf));
+	  VERIFY(arc_buf_remove_ref(abuf, &abuf));
+        }
 
 	return (error);
 }
@@ -610,10 +601,9 @@ zil_create(zilog_t *zilog)
 			zio_free_zil(zilog->zl_spa, txg, &blk);
 			BP_ZERO(&blk);
 		}
-
 		error = zio_alloc_zil(zilog->zl_spa, txg, &blk,
                               ZIL_MIN_BLKSZ, B_TRUE, zilog->zl_os->os_crypt);
-		fastwrite = TRUE;
+		fastwrite = TRUE; 
 
 		if (error == 0)
 			zil_init_log_chain(zilog, &blk);
@@ -988,9 +978,10 @@ zil_lwb_write_init(zilog_t *zilog, lwb_t *lwb)
 		}
 		lwb->lwb_zio = zio_rewrite(zilog->zl_root_zio, zilog->zl_spa,
 		    0, &lwb->lwb_blk, lwb->lwb_buf, BP_GET_LSIZE(&lwb->lwb_blk),
-		    zil_lwb_write_done, lwb, ZIO_PRIORITY_SYNC_WRITE,
+		    &zp, zil_lwb_write_done, lwb, ZIO_PRIORITY_SYNC_WRITE,
 		    ZIO_FLAG_CANFAIL | ZIO_FLAG_DONT_PROPAGATE |
 		    ZIO_FLAG_FASTWRITE, &zb);
+
 	}
 	mutex_exit(&zilog->zl_lock);
 }
@@ -1133,7 +1124,8 @@ zil_lwb_write_start(zilog_t *zilog, lwb_t *lwb)
 	 */
 	bzero(lwb->lwb_buf + lwb->lwb_nused, wsz - lwb->lwb_nused);
 
-	zio_nowait(lwb->lwb_zio); /* Kick off the write for the old log block */
+	//zio_nowait(lwb->lwb_zio); /* Kick off the write for the old log block */
+	zio_wait(lwb->lwb_zio); /* Kick off the write for the old log block */
 
 	/*
 	 * If there was an allocation failure then nlwb will be null which
@@ -2376,11 +2368,11 @@ zil_set_crypto_data(char *src, size_t size,
      */
     iovcheck = iovcnt;
     if (encrypting) {
-        srciov = kmem_alloc(sizeof (iovec_t) * iovcnt, KM_SLEEP);
-        dstiov = kmem_alloc(sizeof (iovec_t) * (iovcnt + 1), KM_SLEEP);
+        srciov = vmem_alloc(sizeof (iovec_t) * iovcnt, KM_SLEEP);
+        dstiov = vmem_alloc(sizeof (iovec_t) * (iovcnt + 1), KM_SLEEP);
     } else {
-        srciov = kmem_alloc(sizeof (iovec_t) * (iovcnt + 1), KM_SLEEP);
-        dstiov = kmem_alloc(sizeof (iovec_t) * iovcnt, KM_SLEEP);
+        srciov = vmem_alloc(sizeof (iovec_t) * (iovcnt + 1), KM_SLEEP);
+        dstiov = vmem_alloc(sizeof (iovec_t) * iovcnt, KM_SLEEP);
     }
 
     iovcnt = 0;
