@@ -603,7 +603,7 @@ zil_create(zilog_t *zilog)
 		}
 		error = zio_alloc_zil(zilog->zl_spa, txg, &blk,
                               ZIL_MIN_BLKSZ, B_TRUE, zilog->zl_os->os_crypt);
-		fastwrite = TRUE; 
+		fastwrite = TRUE;
 
 		if (error == 0)
 			zil_init_log_chain(zilog, &blk);
@@ -1124,8 +1124,7 @@ zil_lwb_write_start(zilog_t *zilog, lwb_t *lwb)
 	 */
 	bzero(lwb->lwb_buf + lwb->lwb_nused, wsz - lwb->lwb_nused);
 
-	//zio_nowait(lwb->lwb_zio); /* Kick off the write for the old log block */
-	zio_wait(lwb->lwb_zio); /* Kick off the write for the old log block */
+	zio_nowait(lwb->lwb_zio); /* Kick off the write for the old log block */
 
 	/*
 	 * If there was an allocation failure then nlwb will be null which
