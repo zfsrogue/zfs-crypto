@@ -221,6 +221,11 @@ zio_crypt_setup_mech_common(int crypt, int type, size_t datalen)
 	mech->cm_type = crypto_mech2id(zio_crypt_table[crypt].ci_mechname);
 	ASSERT(mech->cm_type != CRYPTO_MECH_INVALID);
 
+	if (mech->cm_type == -1) {
+	  printk("ZFS: warning type is -1? crypt %d - > '%s'\n", crypt,
+		 zio_crypt_table[crypt].ci_mechname);
+	}
+
 	if (mech->cm_type == crypto_mech2id(SUN_CKM_AES_CCM)) {
 		CK_AES_CCM_PARAMS *ccmp;
 		ccmp = kmem_alloc(sizeof (CK_AES_CCM_PARAMS), KM_SLEEP);
@@ -399,7 +404,7 @@ zio_encrypt_data(int crypt, zcrypt_key_t *key, zbookmark_phys_t *bookmark,
 		dstuio.uio_iovcnt = iovcnt + 1;
 		ciphertext.cd_length = plaintext.cd_length + maclen;
 	} else {
-		dstiov = kmem_alloc(sizeof (iovec_t) * 2, KM_SLEEP);
+		dstiov = vmem_alloc(sizeof (iovec_t) * 2, KM_SLEEP);
 
 		SET_CRYPTO_DATA(plaintext, src, size);
 
@@ -494,10 +499,10 @@ out:
 	kmem_free(srccopy, size);
 #endif /* _DEBUG */
 	if (srciov != NULL) {
-		kmem_free(srciov, sizeof (iovec_t) * srcuio.uio_iovcnt);
+		vmem_free(srciov, sizeof (iovec_t) * srcuio.uio_iovcnt);
 	}
 	if (dstiov != NULL) {
-		kmem_free(dstiov, sizeof (iovec_t) * dstuio.uio_iovcnt);
+		vmem_free(dstiov, sizeof (iovec_t) * dstuio.uio_iovcnt);
 	}
 	if (lsrc) {
 		kmem_free(src, size);
@@ -570,7 +575,7 @@ zio_decrypt_data(zcrypt_key_t *key, zbookmark_phys_t *bookmark,
 		    B_FALSE, key, txg, bookmark, NULL,
 		    ciphertext.cd_length, iv);
 	} else {
-		srciov = kmem_alloc(sizeof (iovec_t) * 2, KM_SLEEP);
+		srciov = vmem_alloc(sizeof (iovec_t) * 2, KM_SLEEP);
 
 		maclen = zio_crypt_table[key->zk_crypt].ci_maclen;
 
@@ -630,10 +635,10 @@ retry:
 
 	zio_crypt_free_mech(mech);
 	if (srciov != NULL) {
-		kmem_free(srciov, sizeof (iovec_t) * srcuio.uio_iovcnt);
+		vmem_free(srciov, sizeof (iovec_t) * srcuio.uio_iovcnt);
 	}
 	if (dstiov != NULL) {
-		kmem_free(dstiov, sizeof (iovec_t) * dstuio.uio_iovcnt);
+		vmem_free(dstiov, sizeof (iovec_t) * dstuio.uio_iovcnt);
 	}
 #endif
 	return (err);
